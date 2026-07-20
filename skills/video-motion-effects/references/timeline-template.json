@@ -1,0 +1,41 @@
+{
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration": null,
+    "base_fit": "cover",
+    "background_color": "#000000"
+  },
+  "effect_catalog": {
+    "dynamic_shrink": "reference_first_v2",
+    "bottom_rise": "reference_second_v1",
+    "perspective_settle": "reference_third_v3",
+    "flash_stretch": "reference_fourth_v1",
+    "page_curl": "reference_fifth_v1"
+  },
+  "events": [
+    {
+      "name": "<填写任务内名称>",
+      "path": "<填写图片路径>",
+      "kind": "image",
+      "start": 1.0,
+      "end": 4.0,
+      "layout": {
+        "width": 760,
+        "height": null,
+        "x": "center",
+        "y": "center",
+        "origin_x": null,
+        "origin_y": null,
+        "border_radius": null
+      },
+      "effect": {
+        "type": "dynamic_shrink",
+        "preset": "reference_first_v2",
+        "duration": 0.333333,
+        "samples": 72
+      }
+    }
+  ]
+}

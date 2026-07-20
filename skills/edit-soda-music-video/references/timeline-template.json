@@ -1,0 +1,73 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "speed": 1.1,
+  "tail_duration": null,
+  "time_mode": "original",
+  "motion_effects": {
+    "mode": "auto",
+    "selection": "random",
+    "seed": null,
+    "apply_probability": 1.0,
+    "max_events": 3,
+    "eligible_layouts": ["full_alpha", "phone", "cta_icon"],
+    "min_visible_duration": 0.8,
+    "effect_duration": 0.333333,
+    "samples": 48
+  },
+  "warning_text": "本视频为广告创意，具体奖励金额以产品实际情况为准",
+  "cta": {
+    "title": "<填写行动标题>",
+    "subtitle": "<填写行动副标题>"
+  },
+  "font": {
+    "body_path": "<填写正文字体路径>",
+    "body_family": "<填写方正兰亭字体内部名称>",
+    "body_color": "#FFFFFF",
+    "brand_path": "<填写品牌字体路径>",
+    "brand_family": "<填写SodaFont字体内部名称>",
+    "brand_color": "#3BFD42",
+    "caption_style": {
+      "font_size": 70,
+      "scale_x": 100,
+      "scale_y": 100,
+      "spacing": 0,
+      "outline": 3,
+      "shadow": 0,
+      "alignment": 2,
+      "margin_left": 72,
+      "margin_right": 72,
+      "margin_vertical": 330,
+      "position_mode": "center_offset",
+      "x": 0,
+      "y": -500,
+      "editor_reference": {
+        "font_size": 13,
+        "scale": 100,
+        "outline": 3
+      }
+    }
+  },
+  "logo": {
+    "mode": "auto",
+    "white_path": "<填写浅色logo路径>",
+    "black_path": "<填写深色logo路径>",
+    "width": 286,
+    "x": 48,
+    "y": 72
+  },
+  "tail": {
+    "path": "<填写官方尾帧视频路径>"
+  },
+  "visual_policy": {
+    "forbid_generated_black_bars": true,
+    "forbid_caption_backplates": true,
+    "caption_outline_policy": "thin_black_2_3px",
+    "forbid_material_backplates": true,
+    "source_black_bar_check": "error"
+  },
+  "removed_ranges": [],
+  "captions": [],
+  "materials": []
+}

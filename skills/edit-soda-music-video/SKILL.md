@@ -1,0 +1,178 @@
+---
+name: edit-soda-music-video
+description: Create, revise, or validate Soda Music portrait talking-head mixed-cut videos with a standalone Python and FFmpeg workflow plus optional randomly selected Remotion entrance effects from an installed video-motion-effects skill. Includes pause detection, natural pause compression, speed remapping, logos, subtitles, caller-supplied assets, compliance, BGM, end cards, export, and QA. Use for 汽水混剪、汽水音乐剪辑、去气口、口播加速、物料动效、随机入场特效、logo、素材清单、BGM、尾帧、渠道检查或自动化成片。
+---
+
+# 汽水音乐混剪成片
+
+## 核心原则
+
+保留原始视频、BGM 和素材包，只输出新文件。Skill 内不得保存或假设具体素材名称、文件名、绝对路径、固定时间码或样片脚本；只维护素材种类、输入契约和剪辑规则。所有任务素材必须由调用方提供。
+
+字幕中的“汽水音乐”和“汽水”必须使用调用方提供的 SodaFont，并显示为品牌绿 `#3BFD42`；同一字幕中的其他文字立即恢复为调用方提供的方正兰亭和普通字幕颜色。字体规范属于品牌规则，可以写入 Skill；字体文件和路径仍由调用方提供。
+
+字体 family 必须填写字体文件的真实内部名称。字幕字号、缩放、字间距、描边、阴影、对齐和位置统一通过时间轴的 `font.caption_style` 配置；新时间轴使用模板中的校准值，旧时间轴缺少该字段时保留兼容默认值。
+
+成片不设置最低时长。实际长度由数字人口播、自然去气口、调用方指定倍速和官方尾帧共同决定；不得为了凑时长重复镜头、拉长静帧或补无关内容。渠道金额、禁词、歌曲审查和第三方授权规则仍然必须执行。
+
+每次执行前完整阅读 [brand-rules.md](references/brand-rules.md)。准备素材时阅读 [asset-requirements.md](references/asset-requirements.md) 和 [asset-manifest.md](references/asset-manifest.md)，准备剪辑或渲染时阅读 [workflow.md](references/workflow.md)，调整运行环境、素材目录或时间轴配置时阅读 [standalone-runtime.md](references/standalone-runtime.md)。
+
+去气口必须先于倍速处理。不要判断口播速度来决定是否加速：调用方未指定时统一使用 `1.1×`；调用方指定时以 `--speed` 为准。详细判定规则见 [pause-removal.md](references/pause-removal.md)。
+
+透明 logo 的画布比例与目标视频一致时，优先把整张 logo 画布直接缩放到输出尺寸并在 `(0,0)` 叠加，不要裁剪透明留白或单独修改可见 logo 大小。只有紧边 logo 或比例不一致的素材才使用 `width/x/y/crop` 定位。
+
+字幕和素材不得出现背景黑条、黑框或半透明黑色承托层。字幕保留 `2–3px` 黑色细描边，默认 `3px`，阴影固定为 `0`；警示语、开头钩子和 CTA 只使用纯文字。`phone` 素材必须等比直接叠加，禁止通过 `drawbox`、pad 或背景板补黑边。素材可以进入字幕区域，但字幕和警示文字必须在所有素材之后绘制并始终位于素材上方。源视频若被预检识别出跨多帧稳定的固定黑边，必须更换或裁切素材后才能渲染。
+
+成片必须从数字人口播第一帧直接开始，不生成模糊背景标题卡、预卷、开场动画或独立静帧。开头钩子只能通过数字人画面上的字幕或已审查物料表达。旧时间轴中的 `pre_roll_duration` 和 `hook` 字段仅兼容读取，渲染器必须忽略。
+
+BGM 必须先按目标综合响度归一化，再做小范围后置微调。默认目标为 `-28 LUFS`，`--bgm-volume` 默认为 `1.0`，只作为归一化后的微调倍率；不得沿用旧的原始衰减值 `0.22`。人声继续归一化到 `-16 LUFS`，最终以人声清晰且 BGM 可感知但不盖住人声为准。
+
+默认以 `motion_effects.mode=auto` 检测已安装的 `video-motion-effects`。可用时为合格图片物料随机选择 Remotion 入场效果；不可用或单个效果失败时回退静态叠加。随机选择必须可复现，详细规则见 [motion-effects.md](references/motion-effects.md)。
+
+## 执行顺序
+
+1. 确认工作区、素材根目录、BGM、时间轴 JSON、渠道类型、金币/歌单状态、歌曲审查结果和第三方授权；实际时长以数字人口播处理结果为准。
+2. 运行素材清单同步；若检测到新增、删除或修改，读取并更新工作区 Manifest，否则复用已有清单。
+3. 运行预检，检查字幕 `2–3px` 黑色细描边、阴影为 `0`、无背景承托层、文字图层高于素材和源素材无固定黑边；不要在素材或运行环境缺失时猜测路径。
+4. 使用多组音量阈值交叉检测停顿；本机可用 Whisper 时增加逐词时间戳校验。
+5. 结合语义、波形、呼吸、尾音、口型和动作人工确认范围，每处默认保留约 `0.16s`，不得整段删除。
+6. 先输出去气口中间视频，再应用倍速。未指定时使用 `1.1×`，指定时使用调用方传入的倍速。
+7. 校正字幕，按去气口和倍速后的时间轴匹配真实物料；检测 `video-motion-effects` 并按稳定随机种子为合格图片选择入场效果。字幕使用 `2–3px` 黑色细描边且无阴影，不得带背景条；素材不受字幕安全区限制，但字幕和警示文字必须位于素材及动效上方。第 0 秒直接显示数字人，开头 0–3 秒可叠加有效钩子字幕或物料，不得生成独立开场或黑屏。
+8. 先运行规则校验，再渲染。校验失败时不要通过改参数绕过红线。
+9. 使用调用方提供的官方 logo、规定警示语和官方尾帧视频。尾帧硬切进入，不叠加其他元素。
+10. 先把 BGM 归一化到目标响度，再混入人声和轻提示音，完成人声、BGM、响度和手机扬声器复听。
+11. 运行完整 QA，交付成片、封面、素材/时间轴报告、合规报告和技术验收报告。
+
+## 命令入口
+
+将 Skill 路径和运行时设为：
+
+```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/edit-soda-music-video"
+PY=python3
+PIPE="$SKILL_DIR/scripts/soda_pipeline.py"
+```
+
+### 同步工作区素材清单
+
+```bash
+"$PY" "$PIPE" sync-assets \
+  --workspace /absolute/path/workspace \
+  --asset-root /absolute/path/assets
+```
+
+默认在工作区生成 `soda_assets_manifest.json`。首次运行创建清单；后续运行先比较素材指纹，未变化时返回 `status=unchanged` 且不重写文件，检测到新增、删除或修改时才更新清单。需要内容级校验时增加 `--checksum`；只想快速扫描文件而不调用 FFprobe 时增加 `--quick`。详细字段见 [asset-manifest.md](references/asset-manifest.md)。
+
+### 预检
+
+```bash
+"$PY" "$PIPE" preflight \
+  --input /absolute/path/source.mov \
+  --asset-root /absolute/path/assets \
+  --bgm /absolute/path/background-music.mp3 \
+  --timeline-json /absolute/path/timeline.json \
+  --output-json /absolute/path/preflight.json
+```
+
+必须检查 `ok=true`。`--asset-root`、`--bgm` 和 `--timeline-json` 没有默认值，必须按任务显式传入。
+
+可复制 `$SKILL_DIR/references/timeline-template.json` 到任务输出目录，填写调用方实际提供的路径、字幕、物料和时间点，再通过 `--timeline-json` 传入。模板只描述字段结构，不包含现有素材信息。
+
+### 去气口
+
+```bash
+"$PY" "$PIPE" detect-pauses \
+  --input /absolute/path/source.mov \
+  --thresholds=-35dB,-30dB,-25dB \
+  --min-silence 0.35 \
+  --dynamic-min-silence 0.18 \
+  --keep-pause 0.16 \
+  --output-json /absolute/path/pause_candidates.json
+```
+
+默认尝试调用本地 Whisper `tiny` 模型生成逐词时间戳；环境不可用时仍会输出多阈值候选并记录警告。需要跳过 Whisper 时使用 `--no-whisper`，需要其他本地模型时使用 `--whisper-model`。
+
+人工审核 `remove_ranges` 后再执行：
+
+```bash
+"$PY" "$PIPE" trim-pauses \
+  --input /absolute/path/source.mov \
+  --ranges-json /absolute/path/approved_ranges.json \
+  --output /absolute/path/source_去气口.mp4 \
+  --output-json /absolute/path/trim_report.json
+```
+
+严格阈值先检测 0.35 秒以上静音，较敏感阈值补充 0.18 秒以上停顿。只把多阈值相互印证，或音量检测与 Whisper 逐词间隔相互印证的区间列为稳定候选。每处保留范围必须在 `0.12–0.20s`，默认 `0.16s`。不得切掉呼吸、尾音、爆破音或造成跳口。
+
+### 规则校验
+
+校验示例：
+
+```bash
+"$PY" "$PIPE" validate-rules \
+  --channel old-down \
+  --video /absolute/path/edited.mp4 \
+  --script-file /absolute/path/script.txt \
+  --amount-yuan 25 \
+  --has-playlist \
+  --song-review-passed \
+  --output-json /absolute/path/compliance.json
+```
+
+视频时长仅记录实际结果，不作为通过或失败条件。不要默认打开 `--allow-third-party` 或 `--song-review-passed`；必须有真实依据。
+
+### 渲染
+
+先用 `--dry-run` 查看 Skill 内置独立 renderer 的计划：
+
+```bash
+"$PY" "$PIPE" render \
+  --input /absolute/path/source_去气口.mp4 \
+  --asset-root /absolute/path/assets \
+  --bgm /absolute/path/background-music.mp3 \
+  --timeline-json /absolute/path/timeline.json \
+  --output /absolute/path/finished.mp4 \
+  --speed 1.1 \
+  --channel old-down \
+  --script-file /absolute/path/script.txt \
+  --bgm-target-lufs -28 \
+  --bgm-volume 1.0 \
+  --compliance-report /absolute/path/compliance.json \
+  --preflight-report /absolute/path/preflight.json \
+  --qa-report /absolute/path/qa.json \
+  --motion-effects auto \
+  --motion-seed version-a \
+  --dry-run
+```
+
+确认无误后移除 `--dry-run`。基础 renderer 依赖 Python 3 标准库、FFmpeg、FFprobe、输入视频、BGM、素材目录和时间轴；启用已安装的 `video-motion-effects` 时额外使用 Node、Chrome 和该 Skill 的 Remotion 依赖。`--bgm-target-lufs` 控制归一化目标，默认 `-28`；`--bgm-volume` 是归一化后的微调倍率，默认 `1.0`、允许范围 `0.5–1.5`。需要调整时优先每次改变目标响度约 `1–2 LUFS`；只有细微听感修正时才把微调倍率每次改变约 `0.03–0.05`，并重新运行完整响度与人声清晰度 QA。
+
+`--speed` 在去气口之后应用，默认值为 `1.1`。不要根据口播快慢自行改回原速；只有调用方明确传入其他值时才覆盖默认值。字幕、物料和提示音必须同时按去气口范围与最终倍速重映射。
+
+`--motion-effects` 可为 `auto/off/required`；`--motion-seed` 用于生成可复现的随机动效版本。省略种子时，渲染器根据时间线、输出路径和物料信息生成稳定种子。
+
+成片时长跟随处理后的数字人口播，不设置最低值；不要重复镜头、拉长静帧或添加无关内容补时长。
+
+### 单独验收
+
+```bash
+"$PY" "$PIPE" qa \
+  --input /absolute/path/finished.mp4 \
+  --output-json /absolute/path/qa.json
+```
+
+只有排查环境时才使用 `--quick`；最终交付必须执行完整解码和响度扫描。QA 记录实际时长，但不按时长判定失败。
+
+## 渲染与内容边界
+
+- 使用 Skill 内置 `standalone_renderer.py` 生成 ASS 字幕、读取媒体信息，并在可用时调用 `video-motion-effects` 生成临时 Remotion Alpha 入场片段。渲染顺序固定为主画面 → logo/静态或动效物料 → 字幕/警示文字 → BGM，随后生成封面和 JSON 报告。
+- 默认输出 1080×1920、30fps、H.264 High/yuv420p、AAC 192kbps/44.1kHz、faststart。
+- 人声参考 -16 LUFS、LRA≤7、True Peak≤-1.5 dBTP；BGM 默认归一化到 -28 LUFS；成片综合响度建议 -16±1 LUFS。
+- QA 必须确认字幕、警示语和所有素材外围不存在背景黑条、黑框或半透明黑色承托层；字幕黑色细描边为 `2–3px`、阴影为 `0`，且字幕始终位于素材上方；源素材固定黑边必须在预检阶段拦截。
+- 缺少素材时可用明确标注 `DEMO/待替换` 的文字卡临时占位；正式交付前必须替换或获得书面确认。
+- 歌单、金额、第三方名称和“赚钱”类利益点必须按渠道分别校验，不能把一次授权扩展到其他任务。
+- 素材文件名或目录名中的内部标签不得直接当作投放文案；最终画面、字幕和旁白仍须单独执行禁词扫描。
+
+## 交付说明
+
+最终回复列出：输入文件、渠道、去气口范围、速度、素材根目录、BGM、BGM 目标 LUFS 和后置微调倍率、实际时长、输出视频、封面、合规报告、预检报告和 QA 结果。

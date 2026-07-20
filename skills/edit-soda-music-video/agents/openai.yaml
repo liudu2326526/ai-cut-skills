@@ -1,0 +1,4 @@
+interface:
+  display_name: "汽水音乐混剪成片"
+  short_description: "数字人直入、随机 Remotion 物料动效与汽水混剪完整验收"
+  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪，并在可用时随机加入可复现的 Remotion 物料入场动效。"
