@@ -138,6 +138,27 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise PipelineError("visual_policy must be an object")
     source_check = str(raw.get("source_black_bar_check", "error"))
+    safe_area_raw = raw.get("material_safe_area", {})
+    if not isinstance(safe_area_raw, dict):
+        raise PipelineError("visual_policy.material_safe_area must be an object")
+    try:
+        safe_area = {
+            "left": int(safe_area_raw.get("left", 48)),
+            "right": int(safe_area_raw.get("right", 48)),
+            "top": int(safe_area_raw.get("top", 320)),
+            "bottom": int(safe_area_raw.get("bottom", 180)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise PipelineError("visual_policy.material_safe_area margins must be integers") from exc
+    if any(value < 0 for value in safe_area.values()):
+        raise PipelineError("visual_policy.material_safe_area margins must be non-negative")
+    canvas_width = int(config.get("width", 1080))
+    canvas_height = int(config.get("height", 1920))
+    if (
+        safe_area["left"] + safe_area["right"] >= canvas_width
+        or safe_area["top"] + safe_area["bottom"] >= canvas_height
+    ):
+        raise PipelineError("visual_policy.material_safe_area leaves no usable material area")
     policy = {
         "forbid_generated_black_bars": bool(raw.get("forbid_generated_black_bars", True)),
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
@@ -145,6 +166,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "forbid_material_backplates": bool(raw.get("forbid_material_backplates", True)),
         "require_logo_top_layer": bool(raw.get("require_logo_top_layer", True)),
         "require_warning_top_layer": bool(raw.get("require_warning_top_layer", True)),
+        "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
+        "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
     if not all(
@@ -155,10 +178,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "forbid_material_backplates",
             "require_logo_top_layer",
             "require_warning_top_layer",
+            "enforce_material_safe_area",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise PipelineError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, and source_black_bar_check must be error"
         )
     return policy
 
@@ -437,6 +461,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             "The skill stores asset categories only; pass task-specific --asset-root, --bgm, and --timeline-json values.",
             "Internal asset labels and file names must not bypass final visual, subtitle, or speech compliance checks.",
             "Caption backplates are forbidden; captions require a 2-3px black outline, shadow=0, and a layer above all materials.",
+            "Material visible bounds and Remotion alpha effects are constrained to visual_policy.material_safe_area so they cannot enter the logo or warning regions.",
         ],
     }
 
@@ -1089,7 +1114,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
         "manual_checks_required": [
             "逐帧确认无黑屏、绿屏、冻帧、残帧和多 logo 叠加。",
             "确认字幕、安全区、警示语、歌曲审查和素材合规。",
-            "确认字幕位于所有素材上方，logo 位于素材、字幕和 CTA 上方，警示语为最终最高层；字幕黑色细描边为 2-3px、阴影为 0，且不存在背景黑条、黑框或半透明黑色承托层。",
+            "确认素材没有进入左上 logo 区域和底部警示语区域；字幕位于所有素材上方，logo 位于素材、字幕和 CTA 上方，警示语为最终最高层；字幕黑色细描边为 2-3px、阴影为 0，且不存在背景黑条、黑框或半透明黑色承托层。",
             "使用耳机和手机扬声器复听，确认 BGM 不过小且不盖住人声。",
         ],
     }

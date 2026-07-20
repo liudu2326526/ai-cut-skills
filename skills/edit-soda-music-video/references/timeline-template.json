@@ -67,6 +67,13 @@
     "forbid_material_backplates": true,
     "require_logo_top_layer": true,
     "require_warning_top_layer": true,
+    "enforce_material_safe_area": true,
+    "material_safe_area": {
+      "left": 48,
+      "right": 48,
+      "top": 320,
+      "bottom": 180
+    },
     "source_black_bar_check": "error"
   },
   "removed_ranges": [],

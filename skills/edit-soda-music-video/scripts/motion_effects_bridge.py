@@ -245,7 +245,17 @@ def _layout_for_material(
         raise MotionEffectsError(f"Unable to read material dimensions: {source_path}")
     layout = str(material["layout"])
     source_crop: list[int] | None = None
-    if layout == "full_alpha":
+    safe_transform = material.get("safe_transform")
+    if isinstance(safe_transform, dict):
+        target_width = float(safe_transform["width"])
+        target_height = float(safe_transform["height"])
+        x = float(safe_transform["x"])
+        y = float(safe_transform["y"])
+        crop = safe_transform.get("crop")
+        source_crop = [int(value) for value in crop] if crop else None
+        origin_x = target_width / 2
+        origin_y = target_height / 2
+    elif layout == "full_alpha":
         bbox = _alpha_bbox(source_path)
         if bbox:
             bx, by, bw, bh = bbox

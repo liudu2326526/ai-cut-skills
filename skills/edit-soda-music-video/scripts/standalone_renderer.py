@@ -51,6 +51,27 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise RenderError("visual_policy must be an object")
     source_check = str(raw.get("source_black_bar_check", "error"))
+    safe_area_raw = raw.get("material_safe_area", {})
+    if not isinstance(safe_area_raw, dict):
+        raise RenderError("visual_policy.material_safe_area must be an object")
+    try:
+        safe_area = {
+            "left": int(safe_area_raw.get("left", 48)),
+            "right": int(safe_area_raw.get("right", 48)),
+            "top": int(safe_area_raw.get("top", 320)),
+            "bottom": int(safe_area_raw.get("bottom", 180)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise RenderError("visual_policy.material_safe_area margins must be integers") from exc
+    if any(value < 0 for value in safe_area.values()):
+        raise RenderError("visual_policy.material_safe_area margins must be non-negative")
+    canvas_width = int(config.get("width", 1080))
+    canvas_height = int(config.get("height", 1920))
+    if (
+        safe_area["left"] + safe_area["right"] >= canvas_width
+        or safe_area["top"] + safe_area["bottom"] >= canvas_height
+    ):
+        raise RenderError("visual_policy.material_safe_area leaves no usable material area")
     policy = {
         "forbid_generated_black_bars": bool(raw.get("forbid_generated_black_bars", True)),
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
@@ -58,6 +79,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "forbid_material_backplates": bool(raw.get("forbid_material_backplates", True)),
         "require_logo_top_layer": bool(raw.get("require_logo_top_layer", True)),
         "require_warning_top_layer": bool(raw.get("require_warning_top_layer", True)),
+        "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
+        "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
     if not all(
@@ -68,10 +91,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "forbid_material_backplates",
             "require_logo_top_layer",
             "require_warning_top_layer",
+            "enforce_material_safe_area",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise RenderError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, and source_black_bar_check must be error"
         )
     return policy
 
@@ -217,6 +241,134 @@ def validate_files(input_path: Path, bgm_path: Path, assets: dict[str, Any]) -> 
 def has_alpha_channel(pix_fmt: str | None) -> bool:
     value = (pix_fmt or "").lower()
     return value in {"rgba", "bgra", "argb", "abgr", "ya8", "ya16be", "ya16le"} or value.startswith(("yuva", "gbrap"))
+
+
+def alpha_bbox(path: Path) -> tuple[int, int, int, int] | None:
+    info = media_summary(path)
+    if not has_alpha_channel(str(info.get("pix_fmt") or "")):
+        return None
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "info", "-i", str(path),
+            "-vf", "alphaextract,bbox=min_val=1", "-frames:v", "1", "-f", "null", "-",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    match = re.search(r"x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+) w:(\d+) h:(\d+)", result.stderr)
+    if not match:
+        return None
+    x1, _x2, y1, _y2, bbox_width, bbox_height = (int(value) for value in match.groups())
+    return x1, y1, bbox_width, bbox_height
+
+
+def apply_material_safe_area(
+    config: dict[str, Any],
+    materials: list[dict[str, Any]],
+    canvas_width: int,
+    canvas_height: int,
+) -> list[dict[str, Any]]:
+    policy = resolve_visual_policy(config)
+    margins = policy["material_safe_area"]
+    safe_left = int(margins["left"])
+    safe_top = int(margins["top"])
+    safe_right = canvas_width - int(margins["right"])
+    safe_bottom = canvas_height - int(margins["bottom"])
+    safe_width = safe_right - safe_left
+    safe_height = safe_bottom - safe_top
+    def adjusted_transform(
+        *,
+        visible_x: float,
+        visible_y: float,
+        visible_width: float,
+        visible_height: float,
+        crop: list[int] | None,
+    ) -> dict[str, Any] | None:
+        violates = (
+            visible_x < safe_left
+            or visible_y < safe_top
+            or visible_x + visible_width > safe_right
+            or visible_y + visible_height > safe_bottom
+        )
+        if not violates:
+            return None
+        scale = min(safe_width / visible_width, safe_height / visible_height, 1.0)
+        target_width = max(1, int(round(visible_width * scale)))
+        target_height = max(1, int(round(visible_height * scale)))
+        return {
+            "crop": crop,
+            "width": target_width,
+            "height": target_height,
+            "x": int(round(safe_left + (safe_width - target_width) / 2)),
+            "y": int(round(safe_top + (safe_height - target_height) / 2)),
+            "reason": "avoid_logo_and_warning_regions",
+        }
+
+    prepared: list[dict[str, Any]] = []
+    for material in materials:
+        item = dict(material)
+        source = media_summary(Path(item["path"]))
+        source_width = int(source.get("width") or 0)
+        source_height = int(source.get("height") or 0)
+        if source_width <= 0 or source_height <= 0:
+            raise RenderError(f"Unable to read material dimensions: {item.get('path')}")
+        layout = str(item.get("layout"))
+        transform: dict[str, Any] | None = None
+        if layout == "full_alpha":
+            bbox = alpha_bbox(Path(item["path"])) if str(item.get("kind")) == "image" else None
+            if bbox:
+                bx, by, bbox_width, bbox_height = bbox
+                scale_x = canvas_width / source_width
+                scale_y = canvas_height / source_height
+                transform = adjusted_transform(
+                    visible_x=bx * scale_x,
+                    visible_y=by * scale_y,
+                    visible_width=bbox_width * scale_x,
+                    visible_height=bbox_height * scale_y,
+                    crop=[bx, by, bbox_width, bbox_height],
+                )
+            else:
+                transform = adjusted_transform(
+                    visible_x=0,
+                    visible_y=0,
+                    visible_width=canvas_width,
+                    visible_height=canvas_height,
+                    crop=None,
+                )
+        elif layout == "phone":
+            scale = min(650 / source_width, 1050 / source_height)
+            target_width = source_width * scale
+            target_height = source_height * scale
+            transform = adjusted_transform(
+                visible_x=(canvas_width - target_width) / 2,
+                visible_y=350,
+                visible_width=target_width,
+                visible_height=target_height,
+                crop=None,
+            )
+        elif layout == "icon":
+            target_width = 230.0
+            target_height = source_height * target_width / source_width
+            transform = adjusted_transform(
+                visible_x=float(item.get("x", 95)),
+                visible_y=720,
+                visible_width=target_width,
+                visible_height=target_height,
+                crop=None,
+            )
+        elif layout == "cta_icon":
+            transform = adjusted_transform(
+                visible_x=(canvas_width - 300) / 2,
+                visible_y=650,
+                visible_width=300,
+                visible_height=300,
+                crop=None,
+            )
+        if transform:
+            item["safe_transform"] = transform
+        prepared.append(item)
+    return prepared
 
 
 def resolve_logo_mode(config: dict[str, Any], logo_info: dict[str, Any]) -> str:
@@ -522,6 +674,11 @@ def render_main(
     width, height, fps = int(config.get("width", 1080)), int(config.get("height", 1920)), int(config.get("fps", 30))
     speed = float(config.get("speed", 1.1))
     font_file = assets["font"]
+    safe_margins = resolve_visual_policy(config)["material_safe_area"]
+    safe_left = int(safe_margins["left"])
+    safe_top = int(safe_margins["top"])
+    safe_width = width - safe_left - int(safe_margins["right"])
+    safe_height = height - safe_top - int(safe_margins["bottom"])
     command = ["ffmpeg", "-hide_banner", "-y", "-i", str(input_path)]
     command.extend(input_args(assets["logo"], "image", fps))
     for material in materials:
@@ -556,17 +713,49 @@ def render_main(
         enable = f"between(t,{material['mapped_start']:.3f},{material['mapped_end']:.3f})"
         layout = material["layout"]
         if layout == "full_alpha":
-            filters.append(f"[{offset}:v]scale={width}:{height},format=rgba[{asset_label}]")
-            overlay = f"[{current}][{asset_label}]overlay=x=0:y=0:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+            transform = material.get("safe_transform")
+            if transform:
+                chain: list[str] = []
+                crop = transform.get("crop")
+                if crop:
+                    chain.append(f"crop={int(crop[2])}:{int(crop[3])}:{int(crop[0])}:{int(crop[1])}")
+                chain.extend(
+                    [
+                        f"scale={int(transform['width'])}:{int(transform['height'])}",
+                        "setsar=1",
+                        "format=rgba",
+                    ]
+                )
+                filters.append(f"[{offset}:v]" + ",".join(chain) + f"[{asset_label}]")
+                overlay = f"[{current}][{asset_label}]overlay=x={int(transform['x'])}:y={int(transform['y'])}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+            else:
+                filters.append(f"[{offset}:v]scale={width}:{height},format=rgba[{asset_label}]")
+                overlay = f"[{current}][{asset_label}]overlay=x=0:y=0:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "phone":
-            filters.append(f"[{offset}:v]scale=650:1050:force_original_aspect_ratio=decrease,setsar=1,format=rgba[{asset_label}]")
-            overlay = f"[{current}][{asset_label}]overlay=x=(W-w)/2:y=350:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+            transform = material.get("safe_transform")
+            target_width = int(transform["width"]) if transform else 650
+            target_height = int(transform["height"]) if transform else 1050
+            overlay_x = str(int(transform["x"])) if transform else "(W-w)/2"
+            overlay_y = str(int(transform["y"])) if transform else "350"
+            filters.append(f"[{offset}:v]scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,setsar=1,format=rgba[{asset_label}]")
+            overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "icon":
-            filters.append(f"[{offset}:v]scale=230:-1,format=rgba[{asset_label}]")
-            overlay = f"[{current}][{asset_label}]overlay=x={int(material.get('x', 95))}:y=720:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+            transform = material.get("safe_transform")
+            if transform:
+                filters.append(f"[{offset}:v]scale={int(transform['width'])}:{int(transform['height'])},format=rgba[{asset_label}]")
+                overlay_x, overlay_y = int(transform["x"]), int(transform["y"])
+            else:
+                filters.append(f"[{offset}:v]scale=230:-1,format=rgba[{asset_label}]")
+                overlay_x, overlay_y = int(material.get("x", 95)), 720
+            overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "cta_icon":
-            filters.append(f"[{offset}:v]scale=300:300,format=rgba[{asset_label}]")
-            overlay = f"[{current}][{asset_label}]overlay=x=(W-w)/2:y=650:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+            transform = material.get("safe_transform")
+            target_width = int(transform["width"]) if transform else 300
+            target_height = int(transform["height"]) if transform else 300
+            overlay_x = str(int(transform["x"])) if transform else "(W-w)/2"
+            overlay_y = str(int(transform["y"])) if transform else "650"
+            filters.append(f"[{offset}:v]scale={target_width}:{target_height},format=rgba[{asset_label}]")
+            overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "motion_alpha":
             motion = material.get("motion_effect", {})
             clip_duration = float(motion.get("clip_duration", 0.0))
@@ -583,6 +772,9 @@ def render_main(
                 f"fps={fps}",
                 f"scale={width}:{height}",
                 "setsar=1",
+                "format=rgba",
+                f"crop={safe_width}:{safe_height}:{safe_left}:{safe_top}",
+                f"pad={width}:{height}:{safe_left}:{safe_top}:color=black@0",
                 "format=rgba",
             ]
             if hold_duration > 0:
@@ -842,6 +1034,12 @@ def main() -> int:
     tail_duration = float(config.get("tail_duration") or tail_info["duration"])
     captions = mapped_captions(config, main_duration)
     materials = mapped_materials(config, assets, main_duration)
+    materials = apply_material_safe_area(
+        config,
+        materials,
+        int(config.get("width", 1080)),
+        int(config.get("height", 1920)),
+    )
     try:
         motion_plan = plan_motion_effects(
             config,
