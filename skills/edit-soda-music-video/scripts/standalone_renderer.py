@@ -56,6 +56,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
         "caption_outline_policy": str(raw.get("caption_outline_policy", "thin_black_2_3px")),
         "forbid_material_backplates": bool(raw.get("forbid_material_backplates", True)),
+        "require_logo_top_layer": bool(raw.get("require_logo_top_layer", True)),
+        "require_warning_top_layer": bool(raw.get("require_warning_top_layer", True)),
         "source_black_bar_check": source_check,
     }
     if not all(
@@ -64,10 +66,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "forbid_generated_black_bars",
             "forbid_caption_backplates",
             "forbid_material_backplates",
+            "require_logo_top_layer",
+            "require_warning_top_layer",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise RenderError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, and source_black_bar_check must be error"
         )
     return policy
 
@@ -546,8 +550,7 @@ def render_main(
             filters.append(f"[1:v]scale={logo_width}:-1,format=rgba[logo]")
         logo_x = int(logo_config.get("x", 48))
         logo_y = int(logo_config.get("y", 72))
-    filters.append(f"[base][logo]overlay=x={logo_x}:y={logo_y}:format=auto:eof_action=pass[v1]")
-    current = "v1"
+    current = "base"
     for offset, material in enumerate(materials, start=2):
         asset_label, next_label = f"asset{offset}", f"v{offset}"
         enable = f"between(t,{material['mapped_start']:.3f},{material['mapped_end']:.3f})"
@@ -592,18 +595,9 @@ def render_main(
         filters.append(overlay)
         current = next_label
 
-    text_filters = [
+    caption_filters = [
         f"subtitles='{escape_filter_path(ass_path)}':fontsdir='{escape_filter_path(font_dir)}'"
     ]
-    if show_warning:
-        text_filters.append(
-            drawtext(
-                str(config.get("warning_text", "本视频为广告创意，具体奖励金额以产品实际情况为准")),
-                font_file=font_file, x="(w-text_w)/2", y="1822", size=27,
-                color="white@0.92",
-            )
-        )
-
     cta = next(
         (
             item for item in materials
@@ -615,13 +609,27 @@ def render_main(
     if cta:
         enable = f"between(t,{cta['mapped_start']:.3f},{cta['mapped_end']:.3f})"
         cta_config = config.get("cta", {})
-        text_filters.extend(
+        caption_filters.extend(
             [
                 drawtext(str(cta_config.get("title", "")), font_file=font_file, x="(w-text_w)/2", y="1010", size=74, color="0x3BFD42", enable=enable),
                 drawtext(str(cta_config.get("subtitle", "")), font_file=font_file, x="(w-text_w)/2", y="1110", size=42, color="white", enable=enable),
             ]
         )
-    filters.append(f"[{current}]" + ",".join(text_filters) + "[vout]")
+    filters.append(f"[{current}]" + ",".join(caption_filters) + "[captioned]")
+    logo_output = "logoed" if show_warning else "vout"
+    filters.append(
+        f"[captioned][logo]overlay=x={logo_x}:y={logo_y}:format=auto:eof_action=pass[{logo_output}]"
+    )
+    if show_warning:
+        filters.append(
+            f"[logoed]"
+            + drawtext(
+                str(config.get("warning_text", "本视频为广告创意，具体奖励金额以产品实际情况为准")),
+                font_file=font_file, x="(w-text_w)/2", y="1822", size=27,
+                color="white@0.92",
+            )
+            + "[vout]"
+        )
     filters.append(
         f"[0:a]atempo={speed},loudnorm=I=-16:LRA=7:TP=-1.5,aformat=sample_rates=44100:channel_layouts=stereo[aout]"
     )
@@ -743,6 +751,9 @@ def build_report(
         "pre_roll_duration": 0.0,
         "opening_policy": "direct-to-digital-human",
         "caption_layer": "above-all-materials",
+        "logo_layer": "above-materials-captions-and-cta",
+        "warning_layer": "topmost-when-enabled",
+        "layer_order": ["base", "materials", "captions_and_cta", "logo", "warning"],
         "tail_duration": tail_duration,
         "estimated_total_duration": main_duration + tail_duration,
         "logo_variant": logo_variant,

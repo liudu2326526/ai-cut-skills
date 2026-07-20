@@ -1,6 +1,6 @@
 {
   "name": "video-motion-effects-remotion",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
   "dependencies": {
     "@remotion/bundler": "4.0.490",
     "@remotion/renderer": "4.0.490",
+    "@vysmo/transitions": "0.5.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "remotion": "4.0.490"

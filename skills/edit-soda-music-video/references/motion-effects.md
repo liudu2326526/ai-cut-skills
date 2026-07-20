@@ -2,9 +2,9 @@
 
 ## 接入规则
 
-渲染器检查 `${CODEX_HOME:-$HOME/.codex}/skills/video-motion-effects`。当 Skill、Node、Chrome 和 Remotion 固定依赖均可用时，从其 `list-effects` 返回值中随机选择效果；当前可选效果为 `dynamic_shrink`。
+渲染器检查 `${CODEX_HOME:-$HOME/.codex}/skills/video-motion-effects`。当 Skill、Node、Chrome 和 Remotion 固定依赖均可用时，从其 `list-effects` 返回值中随机选择效果；当前正式效果包括 `dynamic_shrink`、`bottom_rise`、`perspective_settle`、`flash_stretch` 和 `page_curl`。
 
-Remotion 只生成短透明 ProRes 4444 入场片段。FFmpeg 把最后稳定帧延长到物料结束，再绘制字幕、警示语和 CTA 文字，因此文字图层始终高于动效素材。
+Remotion 只生成短透明 ProRes 4444 入场片段。FFmpeg 把最后稳定帧延长到物料结束，在动效素材上方绘制字幕与 CTA，随后叠加 logo，最后绘制警示语。logo 与警示语不得被任何静态素材、动效素材或文字滤镜遮挡。
 
 ## 时间线配置
 

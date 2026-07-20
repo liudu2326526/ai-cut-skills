@@ -143,6 +143,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
         "caption_outline_policy": str(raw.get("caption_outline_policy", "thin_black_2_3px")),
         "forbid_material_backplates": bool(raw.get("forbid_material_backplates", True)),
+        "require_logo_top_layer": bool(raw.get("require_logo_top_layer", True)),
+        "require_warning_top_layer": bool(raw.get("require_warning_top_layer", True)),
         "source_black_bar_check": source_check,
     }
     if not all(
@@ -151,10 +153,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "forbid_generated_black_bars",
             "forbid_caption_backplates",
             "forbid_material_backplates",
+            "require_logo_top_layer",
+            "require_warning_top_layer",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise PipelineError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, and source_black_bar_check must be error"
         )
     return policy
 
@@ -1085,7 +1089,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
         "manual_checks_required": [
             "逐帧确认无黑屏、绿屏、冻帧、残帧和多 logo 叠加。",
             "确认字幕、安全区、警示语、歌曲审查和素材合规。",
-            "确认字幕和警示语位于所有素材上方，字幕黑色细描边为 2-3px、阴影为 0，且不存在背景黑条、黑框或半透明黑色承托层。",
+            "确认字幕位于所有素材上方，logo 位于素材、字幕和 CTA 上方，警示语为最终最高层；字幕黑色细描边为 2-3px、阴影为 0，且不存在背景黑条、黑框或半透明黑色承托层。",
             "使用耳机和手机扬声器复听，确认 BGM 不过小且不盖住人声。",
         ],
     }

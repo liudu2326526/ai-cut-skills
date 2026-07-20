@@ -35,8 +35,8 @@ const EFFECT_DEFINITIONS = {
   },
   page_curl: {
     aliases: ['page_curl', '卷页翻入回正', '卷页翻入', '第五动效'],
-    presets: ['reference_fifth_v1'],
-    defaultPreset: 'reference_fifth_v1',
+    presets: ['webgl_page_curl_v1'],
+    defaultPreset: 'webgl_page_curl_v1',
     defaultDuration: 26 / 30,
   },
 };
@@ -227,7 +227,12 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
     const effectType = EFFECT_ALIASES.get(requestedType);
     if (!effectType) throw new MotionError(`Unsupported Remotion effect: ${requestedType}`);
     const definition = EFFECT_DEFINITIONS[effectType];
-    const preset = String(effectRaw.preset ?? definition.defaultPreset);
+    const requestedPreset = String(effectRaw.preset ?? definition.defaultPreset);
+    // Old timelines remain readable, but the removed slice renderer is no
+    // longer used. The legacy preset name maps to the WebGL2 implementation.
+    const preset = effectType === 'page_curl' && requestedPreset === 'reference_fifth_v1'
+      ? 'webgl_page_curl_v1'
+      : requestedPreset;
     if (!definition.presets.includes(preset)) {
       throw new MotionError(`Unsupported ${effectType} preset: ${preset}`);
     }
@@ -259,13 +264,24 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
       }
       effect = {type: effectType, preset, duration: effectDuration, samples};
     } else if (effectType === 'page_curl') {
-      const slices = Math.round(Number(effectRaw.slices ?? 192));
-      if (!Number.isInteger(slices) || slices < 64 || slices > 256) {
+      const backTextureStrength = Number(
+        effectRaw.back_texture_strength ?? effectRaw.backTextureStrength ?? 0.92,
+      );
+      if (
+        !Number.isFinite(backTextureStrength)
+        || backTextureStrength < 0
+        || backTextureStrength > 1
+      ) {
         throw new MotionError(
-          `events[${index}].effect.slices must be an integer from 64 to 256 for ${preset}`,
+          `events[${index}].effect.back_texture_strength must be from 0 to 1 for ${preset}`,
         );
       }
-      effect = {type: effectType, preset, duration: effectDuration, slices};
+      effect = {
+        type: effectType,
+        preset,
+        duration: effectDuration,
+        backTextureStrength,
+      };
     } else {
       effect = {type: effectType, preset, duration: effectDuration};
     }
@@ -349,7 +365,9 @@ const toRenderProps = (plan, publicDir) => {
 
 const reportPlan = (plan) => ({
   engine: 'remotion',
-  effectImplementation: 'remotion-react',
+  effectImplementation: plan.events.some((event) => event.effect.type === 'page_curl')
+    ? 'remotion-react-webgl2'
+    : 'remotion-react',
   mode: plan.mode,
   input: plan.inputPath,
   inputSummary: plan.inputSummary,
@@ -385,6 +403,7 @@ const ensureDependencies = () => {
     path.join(ROOT, 'node_modules', 'remotion', 'package.json'),
     path.join(ROOT, 'node_modules', '@remotion', 'renderer', 'package.json'),
     path.join(ROOT, 'node_modules', '@remotion', 'bundler', 'package.json'),
+    path.join(ROOT, 'node_modules', '@vysmo', 'transitions', 'package.json'),
   ];
   if (!required.every((item) => fs.existsSync(item))) {
     throw new MotionError(`Remotion dependencies are missing. Run: node ${path.join(ROOT, 'render.mjs')} setup`);
@@ -482,7 +501,9 @@ const main = async () => {
         ...(type === 'dynamic_shrink' || type === 'perspective_settle'
           ? {defaultSamples: 72}
           : {}),
-        ...(type === 'page_curl' ? {defaultSlices: 192} : {}),
+        ...(type === 'page_curl'
+          ? {defaultBackTextureStrength: 0.92, requiresWebGL2: true}
+          : {}),
       })),
     });
   }

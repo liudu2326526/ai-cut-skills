@@ -65,6 +65,8 @@
     "forbid_caption_backplates": true,
     "caption_outline_policy": "thin_black_2_3px",
     "forbid_material_backplates": true,
+    "require_logo_top_layer": true,
+    "require_warning_top_layer": true,
     "source_black_bar_check": "error"
   },
   "removed_ranges": [],

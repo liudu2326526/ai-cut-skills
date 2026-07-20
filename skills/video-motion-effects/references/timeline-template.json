@@ -12,7 +12,7 @@
     "bottom_rise": "reference_second_v1",
     "perspective_settle": "reference_third_v3",
     "flash_stretch": "reference_fourth_v1",
-    "page_curl": "reference_fifth_v1"
+    "page_curl": "webgl_page_curl_v1"
   },
   "events": [
     {

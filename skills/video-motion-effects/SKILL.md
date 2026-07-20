@@ -1,6 +1,6 @@
 ---
 name: video-motion-effects
-description: "Create, render, validate, or integrate reusable Remotion-based image entrance effects for mixed-cut video timelines. Use when Codex needs 动感缩小, 底部上冲回正, 透视翻转回正, 白闪拉伸回正, 卷页翻入回正, transparent ProRes 4444 layers, reference-frame reproduction, or a Remotion effect preset without FFmpeg animation expressions or Motion Canvas."
+description: "Create, render, validate, or integrate reusable Remotion-based image entrance effects for mixed-cut video timelines. Use when Codex needs 动感缩小, 底部上冲回正, 透视翻转回正, 白闪拉伸回正, WebGL2 卷页翻入回正, mirrored page backs, transparent ProRes 4444 layers, reference-frame reproduction, or a Remotion effect preset without FFmpeg animation expressions or Motion Canvas."
 ---
 
 # Remotion 视频动效
@@ -15,9 +15,9 @@ description: "Create, render, validate, or integrate reusable Remotion-based ima
 - `bottom_rise`：第二动效，底部上冲回正；
 - `perspective_settle`：第三动效，透视翻转回正 V3；
 - `flash_stretch`：第四动效，白闪拉伸回正；
-- `page_curl`：第五动效，卷页翻入回正。
+- `page_curl`：第五动效，WebGL2 卷页翻入回正，使用原图镜像背面。
 
-所有预设都基于 `6473457bdeee21e3149b251fd2e19c2f.mov` 的 30fps 对应帧校准，并按事件最终布局等比映射。详细参数、默认时长和可配置字段见 [effects.md](references/effects.md)。
+前四种预设基于 `6473457bdeee21e3149b251fd2e19c2f.mov` 的 30fps 对应帧校准；`page_curl` 使用连续 WebGL2 网格并按事件最终布局等比映射。详细参数、默认时长和可配置字段见 [effects.md](references/effects.md)。
 
 ## 执行顺序
 
@@ -90,9 +90,9 @@ node "$CLI" render \
 - `layout.origin_x/origin_y` 是缩放锚点，默认素材中心。
 - 事件按 JSON 顺序从下到上叠加。
 - `effect.type` 可使用英文 type 或中文别名；渲染前会统一归一化。
-- `dynamic_shrink`、`perspective_settle` 使用 `samples`；`page_curl` 使用 `slices`；其余效果不需要采样参数。
+- `dynamic_shrink`、`perspective_settle` 使用 `samples`；`page_curl` 可设置 `back_texture_strength`，默认 `0.92`；其余效果不需要采样参数。
 - `composite` 输出 H.264 4:2:0，并保留主视频音频。
-- `alpha` 输出 ProRes 4444/yuva444p10le，不包含音频，可交给其他 FFmpeg 或 Remotion 流程叠加。
+- `alpha` 输出 ProRes 4444 Alpha，不包含音频；具体像素格式以当前 Remotion/FFmpeg build 的报告为准（常见为 `yuva444p10le` 或 `yuva444p12le`）。
 
 ## 验收边界
 
@@ -100,10 +100,10 @@ node "$CLI" render \
 - `bottom_rise`：第 0 帧为空场，第 1–2 帧按参考透明度显形，第 15 帧稳定，不得改变素材尺寸。
 - `perspective_settle`：保留 V3 第 2–7 帧右侧释放区和上宽下窄透视；拖影不得出现硬切交接。
 - `flash_stretch`：第 0 帧必须是高曝光白闪和左右独立拖影，不得渲染成灰块；第 13 帧稳定。
-- `page_curl`：使用 Canvas 网格保留 F235–F238 卷曲拐点、正反面切换和右侧收卷；不得出现纵向切片接缝。
+- `page_curl`：使用 WebGL2 真网格；卷曲区域不得被素材原边界裁断，背面必须显示原图镜像，不得退化为灰色或白色填充；destination 必须透明，不得出现 Canvas 矩形接缝。
 - Alpha 输出背景必须透明，边缘不得出现黑边或黑底。
 - 最终报告必须记录原素材、标准化布局、效果 type、预设、持续时间、采样参数和输出媒体信息。
 
 ## 运行依赖
 
-需要 Node.js、npm、Chrome/Chromium 和 FFprobe。Remotion、React、renderer 与 bundler 使用 Skill 内 `package-lock.json` 固定版本。无需 Python、Motion Canvas、业务项目、数据库或 API。
+需要 Node.js、npm、支持 WebGL2 的 Chrome/Chromium 和 FFprobe。Remotion、React、renderer、bundler 与 `@vysmo/transitions` 使用 Skill 内 `package-lock.json` 固定版本。无需 Python、Motion Canvas、业务项目、数据库或 API。

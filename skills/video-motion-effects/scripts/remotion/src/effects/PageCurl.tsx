@@ -1,109 +1,70 @@
+import {Runner} from '@vysmo/transitions';
 import React, {useEffect, useRef, useState} from 'react';
 import {
   continueRender,
   delayRender,
-  interpolate,
   staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
 import type {PageCurlEvent} from '../types';
-import {
-  atFrame,
-  clamp01,
-  EventImage,
-  lerp,
-  mapReferenceHeight,
-  mapReferenceWidth,
-  mapReferenceX,
-  mapReferenceY,
-} from './shared';
+import {EventImage} from './shared';
+import {pageCurlTransition} from './PageCurlShader';
 
-const clamp = {
-  extrapolateLeft: 'clamp' as const,
-  extrapolateRight: 'clamp' as const,
+const PADDING_RATIO = 0.18;
+const START_PROGRESS = 0.985;
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const easeInOutCubic = (value: number) => {
+  const progress = clamp01(value);
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 };
 
-const LEFT = [48, 48, 48, 117, 157, 157, 156, 156, 155, 154, 153, 152, 150, 148, 144, 140, 133, 126, 120, 116, 113, 111, 110, 109, 108, 107, 107] as const;
-const RIGHT = [85, 178, 240, 293, 343, 395, 453, 506, 538, 554, 561, 566, 568, 571, 574, 579, 585, 592, 599, 603, 606, 607, 609, 610, 611, 612, 612] as const;
-const BASE_TOP = [313, 307, 288, 317, 312, 311, 310, 309, 307, 306, 303, 300, 297, 292, 286, 277, 266, 252, 240, 232, 227, 223, 220, 218, 217, 216, 215] as const;
-const FULL_BOTTOM = [981, 981, 981, 982, 982, 983, 983, 984, 985, 986, 987, 989, 992, 995, 1000, 1006, 1015, 1025, 1034, 1040, 1044, 1047, 1049, 1051, 1052, 1052, 1053] as const;
-const CURL_AMOUNT = [0, 0, 0.05, 0.98, 0.985, 0.988, 0.988, 0.988, 0.986, 0.984, 0.98, 0.97, 0.95, 0.92, 0.88, 0.8, 0.68, 0.52, 0.35, 0.2, 0.1, 0.055, 0.03, 0.018, 0.008, 0, 0] as const;
-const TIP_LIFT = [0, 5, 16, 54, 69, 77, 66, 44, 22, 10, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as const;
-const SKEW = [0, 5, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as const;
-const BACKFACE_CUT = [0, 0, 0, 0, 0.62, 0.58, 0.88, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1] as const;
+const loadImage = (src: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = 'sync';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Unable to load page-curl image: ${src}`));
+    image.src = src;
+  });
 
-const sampleCurve = (points: readonly number[], progress: number) => {
-  const position = clamp01(progress) * (points.length - 1);
-  const index = Math.min(points.length - 2, Math.floor(position));
-  const remainder = position - index;
-  return points[index] + (points[index + 1] - points[index]) * remainder;
-};
-
-const SPECIAL_GEOMETRY: Record<number, {top: readonly number[]; bottom: readonly number[]}> = {
-  3: {
-    top: [904, 687, 317, 269, 282, 291, 302],
-    bottom: [914, 927, 977, 981, 978, 732, 304],
-  },
-  4: {
-    top: [312, 312, 312, 312, 251, 269, 289],
-    bottom: [982, 982, 982, 980, 881, 535, 300],
-  },
-  5: {
-    top: [324, 311, 311, 311, 309, 235, 272],
-    bottom: [983, 983, 982, 975, 710, 454, 278],
-  },
-  6: {
-    top: [310, 310, 310, 310, 307, 297, 244],
-    bottom: [983, 983, 981, 951, 610, 401, 258],
-  },
-};
-
-const referenceSliceGeometry = (frame: number, u: number) => {
-  const baseTop = atFrame(frame, BASE_TOP);
-  const fullBottom = atFrame(frame, FULL_BOTTOM);
-  const curl = atFrame(frame, CURL_AMOUNT);
-  const tipLift = atFrame(frame, TIP_LIFT);
-  const skew = atFrame(frame, SKEW);
-  const special = SPECIAL_GEOMETRY[Math.round(frame)];
-  if (special && Math.abs(frame - Math.round(frame)) < 1e-6) {
-    return {
-      top: sampleCurve(special.top, u),
-      bottom: sampleCurve(special.bottom, u),
-    };
-  }
-  const curlU = clamp01((u - 0.45) / 0.55);
-  const curlEase = curlU * curlU * (3 - 2 * curlU);
-  const top = baseTop + skew * u - tipLift * Math.pow(curlU, 8);
-  const heightFraction = Math.max(0.012, 1 - curl * curlEase);
-  return {top, bottom: top + (fullBottom - baseTop) * heightFraction};
-};
-
-const continuousSliceGeometry = (frame: number, u: number) => {
-  const lower = Math.floor(frame);
-  const upper = Math.ceil(frame);
-  if (lower === upper) return referenceSliceGeometry(frame, u);
-  const progress = frame - lower;
-  const from = referenceSliceGeometry(lower, u);
-  const to = referenceSliceGeometry(upper, u);
-  return {
-    top: lerp(from.top, to.top, progress),
-    bottom: lerp(from.bottom, to.bottom, progress),
-  };
+const roundedRect = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  radius: number,
+) => {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+  context.beginPath();
+  context.moveTo(r, 0);
+  context.lineTo(width - r, 0);
+  context.quadraticCurveTo(width, 0, width, r);
+  context.lineTo(width, height - r);
+  context.quadraticCurveTo(width, height, width - r, height);
+  context.lineTo(r, height);
+  context.quadraticCurveTo(0, height, 0, height - r);
+  context.lineTo(0, r);
+  context.quadraticCurveTo(0, 0, r, 0);
+  context.closePath();
 };
 
 const PageCurlCanvas: React.FC<{
   event: PageCurlEvent;
-  referenceFrame: number;
-  canvasWidth: number;
-  canvasHeight: number;
-}> = ({event, referenceFrame, canvasWidth, canvasHeight}) => {
+  progress: number;
+}> = ({event, progress}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [handle] = useState(() => delayRender('Drawing page curl mesh'));
-  const left = mapReferenceX(atFrame(referenceFrame, LEFT), event.layout);
-  const right = mapReferenceX(atFrame(referenceFrame, RIGHT), event.layout);
-  const fullWidth = Math.max(mapReferenceWidth(1, event.layout), right - left + mapReferenceWidth(1, event.layout));
-  const backfaceCut = atFrame(referenceFrame, BACKFACE_CUT);
+  const runnerRef = useRef<Runner | null>(null);
+  const [handle] = useState(() => delayRender('Rendering WebGL2 page curl'));
+  const paddingX = event.layout.width * PADDING_RATIO;
+  const paddingY = event.layout.height * PADDING_RATIO;
+  const canvasWidth = Math.max(1, Math.ceil(event.layout.width + paddingX * 2));
+  const canvasHeight = Math.max(1, Math.ceil(event.layout.height + paddingY * 2));
+  const canvasLeft = event.layout.x - (canvasWidth - event.layout.width) / 2;
+  const canvasTop = event.layout.y - (canvasHeight - event.layout.height) / 2;
 
   useEffect(() => {
     let active = true;
@@ -113,100 +74,117 @@ const PageCurlCanvas: React.FC<{
       finished = true;
       continueRender(handle);
     };
-    const image = new Image();
-    image.src = staticFile(event.src);
 
-    const draw = () => {
-      if (!active) return;
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext('2d');
-      if (!canvas || !context) {
-        finish();
-        return;
-      }
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = 'high';
-      const sourceWidth = image.naturalWidth || event.layout.width;
-      const sourceHeight = image.naturalHeight || event.layout.height;
-      const overlap = mapReferenceWidth(0.35, event.layout);
+    const render = async () => {
+      try {
+        const image = await loadImage(staticFile(event.src));
+        if (!active || !canvasRef.current) return;
 
-      for (let index = 0; index < event.effect.slices; index++) {
-        const u0 = index / event.effect.slices;
-        const u1 = (index + 1) / event.effect.slices;
-        const u = (u0 + u1) / 2;
-        const geometry = continuousSliceGeometry(referenceFrame, u);
-        const top = mapReferenceY(geometry.top, event.layout);
-        const bottom = mapReferenceY(geometry.bottom, event.layout);
-        const x0 = left + fullWidth * u0;
-        const x1 = left + fullWidth * u1;
-        const reverse = u >= backfaceCut;
-        const sourceIndex = reverse ? event.effect.slices - 1 - index : index;
-        context.drawImage(
-          image,
-          (sourceIndex * sourceWidth) / event.effect.slices,
-          0,
-          sourceWidth / event.effect.slices + sourceWidth / event.effect.slices / 8,
-          sourceHeight,
-          x0,
-          top,
-          Math.max(mapReferenceWidth(0.75, event.layout), x1 - x0 + overlap),
-          Math.max(mapReferenceHeight(2, event.layout), bottom - top),
+        const pageWidth = Math.max(1, Math.round(event.layout.width));
+        const pageHeight = Math.max(1, Math.round(event.layout.height));
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = pageWidth;
+        pageCanvas.height = pageHeight;
+        const pageContext = pageCanvas.getContext('2d');
+        if (!pageContext) throw new Error('Unable to create page-curl source canvas');
+        pageContext.imageSmoothingEnabled = true;
+        pageContext.imageSmoothingQuality = 'high';
+        roundedRect(
+          pageContext,
+          pageWidth,
+          pageHeight,
+          event.layout.borderRadius,
         );
+        pageContext.clip();
+        pageContext.drawImage(image, 0, 0, pageWidth, pageHeight);
+
+        const transparentDestination = document.createElement('canvas');
+        transparentDestination.width = canvasWidth;
+        transparentDestination.height = canvasHeight;
+
+        const runner = new Runner({
+          canvas: canvasRef.current,
+          contextAttributes: {
+            alpha: true,
+            antialias: true,
+            premultipliedAlpha: false,
+            preserveDrawingBuffer: true,
+          },
+        });
+        runnerRef.current = runner;
+
+        runner.render(pageCurlTransition, {
+          from: pageCanvas,
+          to: transparentDestination,
+          progress,
+          params: {
+            tilt: 0.1,
+            backColor: [1, 0.995, 0.975],
+            backTextureStrength: event.effect.backTextureStrength,
+            pageScale: [pageWidth / canvasWidth, pageHeight / canvasHeight],
+            pageOffset: [0, 0],
+            shadowStrength: 0.34,
+          },
+        });
+        runner.gl.finish();
+      } finally {
+        finish();
       }
-      finish();
     };
 
-    image.decode().then(draw).catch(() => {
-      if (image.complete) draw();
-      else image.onload = draw;
-    });
+    void render();
 
     return () => {
       active = false;
+      runnerRef.current?.dispose();
+      runnerRef.current = null;
       finish();
     };
-  }, [backfaceCut, event, fullWidth, handle, left, referenceFrame]);
+  }, [canvasHeight, canvasWidth, event, handle, progress]);
 
   return (
     <canvas
       ref={canvasRef}
       width={canvasWidth}
       height={canvasHeight}
-      style={{position: 'absolute', inset: 0, width: canvasWidth, height: canvasHeight}}
+      style={{
+        position: 'absolute',
+        left: canvasLeft,
+        top: canvasTop,
+        width: canvasWidth,
+        height: canvasHeight,
+        display: 'block',
+        pointerEvents: 'none',
+      }}
     />
   );
 };
 
 export const PageCurl: React.FC<{event: PageCurlEvent}> = ({event}) => {
   const frame = useCurrentFrame();
-  const {fps, width, height} = useVideoConfig();
+  const {fps} = useVideoConfig();
   const effectFrames = Math.max(1, Math.round(event.effect.duration * fps));
-  const referenceFrame = interpolate(frame, [0, effectFrames], [0, 26], clamp);
 
-  if (referenceFrame >= 20) {
-    const leftReference = atFrame(referenceFrame, LEFT);
-    const rightReference = atFrame(referenceFrame, RIGHT);
-    const topReference = atFrame(referenceFrame, BASE_TOP);
-    const bottomReference = atFrame(referenceFrame, FULL_BOTTOM);
+  if (frame >= effectFrames) {
     return (
       <EventImage
         event={event}
-        left={mapReferenceX(leftReference, event.layout)}
-        top={mapReferenceY(topReference, event.layout)}
-        width={mapReferenceWidth(rightReference - leftReference + 1, event.layout)}
-        height={mapReferenceHeight(bottomReference - topReference + 1, event.layout)}
+        left={event.layout.x}
+        top={event.layout.y}
+        width={event.layout.width}
+        height={event.layout.height}
       />
     );
   }
 
+  const reveal = easeInOutCubic(frame / effectFrames);
+  const progress = START_PROGRESS * (1 - reveal);
+
   return (
     <PageCurlCanvas
-      key={`${Math.round(referenceFrame * 1000)}`}
+      key={`webgl-page-curl-${frame}`}
       event={event}
-      referenceFrame={referenceFrame}
-      canvasWidth={width}
-      canvasHeight={height}
+      progress={progress}
     />
   );
 };

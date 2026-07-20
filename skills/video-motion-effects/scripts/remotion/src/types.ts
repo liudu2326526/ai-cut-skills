@@ -50,9 +50,9 @@ export type FlashStretchEffect = {
 
 export type PageCurlEffect = {
   type: 'page_curl';
-  preset: 'reference_fifth_v1';
+  preset: 'webgl_page_curl_v1';
   duration: number;
-  slices: number;
+  backTextureStrength: number;
 };
 
 export type MotionEffect =
