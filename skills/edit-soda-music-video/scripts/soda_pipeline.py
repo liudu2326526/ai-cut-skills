@@ -33,8 +33,6 @@ from motion_effects_bridge import (
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RENDERER = SKILL_ROOT / "scripts" / "standalone_renderer.py"
 DEFAULT_ASSET_MANIFEST_SCRIPT = SKILL_ROOT / "scripts" / "asset_manifest.py"
-DEFAULT_ASSET_UNDERSTANDING_SCRIPT = SKILL_ROOT / "scripts" / "asset_content_understanding.py"
-DEFAULT_ASSET_MATCHER_SCRIPT = SKILL_ROOT / "scripts" / "asset_matcher.py"
 
 CHANNELS = ("old-down", "new-high-mid", "free-listen", "coin-non-down", "general")
 GLOBAL_BANNED_TERMS = ("红包", "花不完", "必听", "必点", "躺平", "emo")
@@ -497,48 +495,6 @@ def cmd_sync_assets(args: argparse.Namespace) -> int:
         command.append("--checksum")
     if args.force:
         command.append("--force")
-    result = run_command(command, capture=False, check=False)
-    return result.returncode
-
-
-def cmd_understand_assets(args: argparse.Namespace) -> int:
-    command = [
-        sys.executable,
-        str(DEFAULT_ASSET_UNDERSTANDING_SCRIPT.resolve()),
-        "--manifest",
-        str(args.manifest.expanduser().resolve()),
-    ]
-    for name in ("asset_root", "output_manifest", "base_url", "api_key", "model", "prompt_version", "max_frames", "limit"):
-        value = getattr(args, name, None)
-        if value is None:
-            continue
-        flag = "--" + name.replace("_", "-")
-        command.extend((flag, str(value)))
-    if args.force:
-        command.append("--force")
-    result = run_command(command, capture=False, check=False)
-    return result.returncode
-
-
-def cmd_match_materials(args: argparse.Namespace) -> int:
-    command = [
-        sys.executable,
-        str(DEFAULT_ASSET_MATCHER_SCRIPT.resolve()),
-        "--manifest",
-        str(args.manifest.expanduser().resolve()),
-        "--query",
-        args.query,
-        "--output-json",
-        str(args.output_json.expanduser().resolve()),
-    ]
-    for name in ("kind", "category", "max_candidates", "base_url", "api_key", "model"):
-        value = getattr(args, name, None)
-        if value is None:
-            continue
-        flag = "--" + name.replace("_", "-")
-        command.extend((flag, str(value)))
-    if args.no_llm:
-        command.append("--no-llm")
     result = run_command(command, capture=False, check=False)
     return result.returncode
 
@@ -1405,38 +1361,6 @@ def build_parser() -> argparse.ArgumentParser:
     sync_assets.add_argument("--checksum", action="store_true")
     sync_assets.add_argument("--force", action="store_true")
     sync_assets.set_defaults(func=cmd_sync_assets)
-
-    understand = sub.add_parser(
-        "understand-assets",
-        help="Use a configured multimodal model to add one description per image/video asset to the Manifest",
-    )
-    understand.add_argument("--manifest", type=Path, required=True)
-    understand.add_argument("--asset-root", type=Path)
-    understand.add_argument("--output-manifest", type=Path)
-    understand.add_argument("--base-url")
-    understand.add_argument("--api-key")
-    understand.add_argument("--model")
-    understand.add_argument("--prompt-version", default="asset-understanding-v1")
-    understand.add_argument("--max-frames", type=int, default=4)
-    understand.add_argument("--limit", type=int)
-    understand.add_argument("--force", action="store_true")
-    understand.set_defaults(func=cmd_understand_assets)
-
-    match = sub.add_parser(
-        "match-materials",
-        help="Match a spoken query against cached asset descriptions without a vector database",
-    )
-    match.add_argument("--manifest", type=Path, required=True)
-    match.add_argument("--query", required=True)
-    match.add_argument("--output-json", type=Path, required=True)
-    match.add_argument("--kind")
-    match.add_argument("--category")
-    match.add_argument("--max-candidates", type=int, default=20)
-    match.add_argument("--base-url")
-    match.add_argument("--api-key")
-    match.add_argument("--model")
-    match.add_argument("--no-llm", action="store_true")
-    match.set_defaults(func=cmd_match_materials)
 
     preflight = sub.add_parser("preflight", help="Check FFmpeg, timeline, BGM, and required assets")
     preflight.add_argument("--asset-root", type=Path, required=True)

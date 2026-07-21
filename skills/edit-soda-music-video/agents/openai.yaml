@@ -1,4 +1,4 @@
 interface:
   display_name: "汽水音乐混剪成片"
-  short_description: "素材 description 理解匹配、口播校正、无标点字幕与 Remotion 动效混剪验收"
-  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪；需要自动选材时先为素材生成 description 并按口播语义匹配，不生成关键词或向量；若提供口播，按口播校正字幕并去除标点。"
+  short_description: "Read 素材理解匹配、口播校正、无标点字幕与 Remotion 动效混剪验收"
+  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪；需要自动选材时直接用 Read 逐张查看图片和视频缩略帧，为 Manifest 写入 description 并按口播语义匹配，不调用额外模型脚本；若提供口播，按口播校正字幕并去除标点。"

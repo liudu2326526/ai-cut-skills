@@ -1,90 +1,61 @@
-# 素材内容理解与 description 匹配
+# 执行模型的素材理解与语义匹配
 
-## 目标
+## 原则
 
-在现有素材 Manifest 的基础上，可选调用一个 OpenAI-compatible 多模态模型，为图片和视频素材生成一段中文 `description`。只保存这一个语义理解字段，不生成或保存 `keywords`、`recommended_usage` 或其他重复的语义字段。
+素材内容理解和素材匹配不通过脚本调用另一个大模型，也不配置 API、模型端点或向量库。执行这个 Skill 的模型本身就是理解和匹配模型，直接使用可用的 Read/图像查看工具检查素材，再编辑工作区 Manifest 和时间轴。
 
-现有的路径、类型、FFprobe 元数据、合规状态和时间轴路径继续作为规则字段保留。
+`sync-assets` 只负责确定性的文件扫描、类型判断和 FFprobe 元数据。它不会理解图片，也不会根据文件名替素材做决定。
 
-## 内容理解
+## 入库时的操作顺序
 
-基础素材扫描和内容理解分开执行：
+1. 运行 `sync-assets`，读取工作区 Manifest；
+2. 查看 Manifest 的 `changes.added`、`changes.modified`，以及缺少 `description` 的素材；
+3. 对每张待理解的图片使用 Read 工具打开原图，逐张确认真实画面；
+4. 对每段待理解的视频先用 FFprobe 获取时长，再用 FFmpeg 导出首帧、四分之一、中点、四分之三和尾帧等缩略图；使用 Read 工具逐张查看这些缩略帧，不能只看文件名或第一帧；
+5. 对透明 PNG 必要时在浅色和深色背景上各查看一次，区分透明留白与实际内容；
+6. 为每个素材写一段准确、具体、可检索的中文 `description`；
+7. 只把 `description` 写入对应 Manifest 素材记录，不增加 `keywords`、`recommended_usage`、向量或模型调用字段；
+8. 保存 Manifest 前复核描述是否真的来自画面，不能把文件名、目录名或粗分类当成画面事实。
 
-```bash
-python3 scripts/soda_pipeline.py sync-assets \
-  --workspace /absolute/path/workspace \
-  --asset-root /absolute/path/assets
+## description 写法
 
-python3 scripts/soda_pipeline.py understand-assets \
-  --manifest /absolute/path/workspace/soda_assets_manifest.json \
-  --model <multimodal-model>
-```
+描述应尽量用一到三句话说明：
 
-`understand-assets` 只处理图片和视频。图片直接发送给模型；视频先用 FFmpeg 抽取代表帧，再把代表帧和媒体信息发送给模型。字体、字幕、音频和 logo/尾帧等非普通视觉素材不会被强制理解。
+- 画面主体和场景；
+- 正在发生的动作或界面操作；
+- 可见的重要文字或功能状态；
+- 这张图/这段视频实际能表达的口播语义。
 
-模型只需要返回：
-
-```json
-{"description":"一段自然、具体、可检索的中文描述"}
-```
-
-描述应合并说明画面主体、场景、动作、界面或物料展示的信息、可见文字和适合表达的口播语义。不得根据文件名臆测画面内容，透明区域不得描述为黑色背景。
-
-Manifest 中的记录形态：
+示例：
 
 ```json
 {
-  "content_understanding": {
-    "description": "这是一段手机录屏，展示用户进入汽水音乐播放设置页面并切换播放模式，适合用于介绍播放模式和播放设置功能。",
-    "status": "ready",
-    "model": "<configured-model>",
-    "prompt_version": "asset-understanding-v1",
-    "source_fingerprint": "<sha256>",
-    "analyzed_at": "<ISO-8601>"
-  }
+  "relative_path": "正文端内物料/通用/模式1.mp4",
+  "kind": "video",
+  "category": "ui_operation",
+  "description": "这是一段手机录屏，展示用户进入汽水音乐播放设置页面并切换播放模式，画面中能看到循环播放和随机播放等选项，适合表达播放模式或播放设置功能。"
 }
 ```
 
-`status/model/prompt_version/source_fingerprint/analyzed_at` 只用于缓存和故障追踪，不是额外的语义字段。
+不要写成空泛描述，例如“一个 App 页面”或“一个功能截图”。不要凭文件名臆测，也不要把透明区域描述成黑色背景。
 
-## 增量和失败处理
+## 什么时候重新查看
 
-- 素材内容指纹、模型和 Prompt 版本都未变化时复用已有 description；
-- 新增、替换、内容变化或 Prompt 版本变化时重新理解；
-- `--force` 强制重新调用模型；
-- 模型失败时写入 `status=failed` 和错误信息，不把失败素材当作已理解素材参与匹配；
-- Manifest 仍是工作区缓存，不复制回 Skill 目录。
+- 新增素材：必须查看并写 description；
+- Manifest 标记为 modified：源文件可能被替换，必须重新查看；
+- 已有 description 且素材未变化：复用，不重复查看；
+- 只有文件名或目录名变化、画面内容未变：可以保留原 description，但要检查路径是否仍对应同一素材；
+- 不能确认素材内容：description 留空并在报告中标记待人工确认，不得编造。
 
-模型配置可以通过命令行或环境变量提供：
+## 根据口播匹配素材
 
-```bash
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_API_KEY="<key>"
-export OPENAI_MODEL="<multimodal-model>"
-```
+执行模型读取当前口播文案、字幕和 Manifest 中每个素材的 `description`，按语义理解进行匹配，而不是按文件名直接命中：
 
-实现使用标准库 HTTP 请求，不绑定某一个 SDK 或向量数据库。
+1. 先按 `kind`、`category`、布局、时长、合规状态和黑边检查做硬过滤；
+2. 对剩余素材逐条阅读 description，并与当前口播句子的主体、动作、功能和场景进行语义比较；
+3. 选择真正能解释这句口播的素材，不因为关键词相似就选无关画面；
+4. 将选中的真实 `path` 写入时间轴的 `materials[].path`，同时保留素材的 `name`、`category`、`kind`、`layout` 和时间范围；
+5. 没有准确匹配时明确报告“没有合适素材”，不要强行填充；
+6. 如有两个以上候选，记录选择理由和未选原因到任务报告，方便人工复核。
 
-## description 匹配
-
-匹配入口：
-
-```bash
-python3 scripts/soda_pipeline.py match-materials \
-  --manifest /absolute/path/workspace/soda_assets_manifest.json \
-  --query "介绍播放模式功能" \
-  --output-json /absolute/path/material_candidates.json \
-  --model <text-or-multimodal-model>
-```
-
-匹配只读取 `content_understanding.description`，不读取或生成关键词数组。流程是：
-
-1. 先按 `kind`、`category`、解析状态等硬条件过滤；
-2. 用 description 做本地文本预筛选，限制候选数量；
-3. 把口播查询和候选 description 交给模型排序；
-4. 输出候选 path、分数、理由和首选素材；
-5. 人工或上层 Agent 确认后，才把首选 path 写入时间轴的 `materials[].path`。
-
-模型只能从候选 path 中选择，不能凭文件名创造新路径。没有可靠匹配时返回空候选，不得为了填满画面强行选素材。
-
-没有模型配置时可使用 `--no-llm` 做 description 文本重叠的离线回退；正式制作优先使用模型匹配，并保留匹配报告。
+模型不能创造 Manifest 中不存在的路径，也不能绕过现有的 logo/警示语保护区、固定黑边、渠道合规和图层顺序规则。

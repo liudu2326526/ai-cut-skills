@@ -6,7 +6,6 @@
 - `ffmpeg`，需要 `libx264`、`aac`、`subtitles/libass`、`loudnorm` 和 `ebur128`；
 - `ffprobe`；
 - 可选本地 `whisper` CLI 和已缓存模型，用于逐词时间戳；不可用时退化为多阈值音量检测；
-- 可选 OpenAI-compatible 多模态模型端点，用于 `understand-assets` 和 `match-materials`；只保存 description，不需要向量数据库或 Python 第三方包；
 - 输入视频、BGM、素材目录和时间轴 JSON。
 - 工作区素材 Manifest 由 `sync-assets` 按需生成，不是 Skill 内置文件。
 - 可选 `${CODEX_HOME:-$HOME/.codex}/skills/video-motion-effects`；启用时额外需要 Node.js、Chrome/Chromium 及该 Skill 已安装的 Remotion 依赖。
@@ -41,7 +40,7 @@ python3 scripts/soda_pipeline.py sync-assets \
   --asset-root /absolute/path/assets
 ```
 
-Manifest 默认写入工作区的 `soda_assets_manifest.json`；它记录相对路径、类型、推断类别、大小、修改时间和可探测的媒体元数据。路径、大小和修改时间未变化时不会重写；需要内容级变化检测时使用 `--checksum`。需要大模型理解图片/视频时，单独运行 `understand-assets`，只补充一段 `content_understanding.description`，不保存关键词、推荐用途或向量。
+Manifest 默认写入工作区的 `soda_assets_manifest.json`；它记录相对路径、类型、推断类别、大小、修改时间和可探测的媒体元数据。路径、大小和修改时间未变化时不会重写；需要内容级变化检测时使用 `--checksum`。需要大模型理解图片/视频时，由执行 Skill 的模型直接用 Read 工具查看原图和视频代表帧，并把一段中文 `description` 写回 Manifest。
 
 ## 时间轴 JSON
 
