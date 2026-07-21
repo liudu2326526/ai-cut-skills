@@ -84,13 +84,13 @@ node "$CLI" render \
 ## 时间线约定
 
 - `start`、`end` 和 `effect.duration` 均使用最终输出时间轴秒数。
-- 当前只接受图片事件；输入图尽量使用紧边透明图，避免围绕整张透明画布中心缩放。
+- 当前只接受图片事件；输入图尽量使用紧边透明图，避免围绕整张透明画布中心缩放。稳定布局默认保持调用方指定的尺寸；接入汽水混剪时先通过平移避让 logo/警示语保护区，只有平移无法解决重叠时才允许有限等比缩小。
 - `layout.width/height` 是最终稳定尺寸；`height` 省略时按源图比例计算。
 - `layout.x/y` 是最终左上角，可使用数字或 `center`。
 - `layout.origin_x/origin_y` 是缩放锚点，默认素材中心。
 - 事件按 JSON 顺序从下到上叠加。
 - `effect.type` 可使用英文 type 或中文别名；渲染前会统一归一化。
-- `dynamic_shrink`、`perspective_settle` 使用 `samples`；`page_curl` 可设置 `back_texture_strength`，默认 `0.92`；其余效果不需要采样参数。
+- `dynamic_shrink`、`perspective_settle` 使用 `samples`；`page_curl` 可设置 `back_texture_strength`，默认 `0.92`；其余效果不需要采样参数。入场阶段可以按效果改变视觉尺度，但最终 Alpha 层仍必须裁切在调用方的品牌保护区之外。
 - `composite` 输出 H.264 4:2:0，并保留主视频音频。
 - `alpha` 输出 ProRes 4444 Alpha，不包含音频；具体像素格式以当前 Remotion/FFmpeg build 的报告为准（常见为 `yuva444p10le` 或 `yuva444p12le`）。
 

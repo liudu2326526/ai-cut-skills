@@ -61,8 +61,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "top": int(safe_area_raw.get("top", 320)),
             "bottom": int(safe_area_raw.get("bottom", 180)),
         }
+        minimum_material_scale = float(raw.get("minimum_material_scale", 0.85))
     except (TypeError, ValueError) as exc:
-        raise RenderError("visual_policy.material_safe_area margins must be integers") from exc
+        raise RenderError(
+            "visual_policy.material_safe_area margins must be integers and minimum_material_scale must be numeric"
+        ) from exc
     if any(value < 0 for value in safe_area.values()):
         raise RenderError("visual_policy.material_safe_area margins must be non-negative")
     canvas_width = int(config.get("width", 1080))
@@ -72,6 +75,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         or safe_area["top"] + safe_area["bottom"] >= canvas_height
     ):
         raise RenderError("visual_policy.material_safe_area leaves no usable material area")
+    if not 0.5 <= minimum_material_scale <= 1.0:
+        raise RenderError("visual_policy.minimum_material_scale must be between 0.5 and 1.0")
     policy = {
         "forbid_generated_black_bars": bool(raw.get("forbid_generated_black_bars", True)),
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
@@ -80,6 +85,9 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "require_logo_top_layer": bool(raw.get("require_logo_top_layer", True)),
         "require_warning_top_layer": bool(raw.get("require_warning_top_layer", True)),
         "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
+        "preserve_material_size": bool(raw.get("preserve_material_size", True)),
+        "reposition_before_scale": bool(raw.get("reposition_before_scale", True)),
+        "minimum_material_scale": minimum_material_scale,
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -92,10 +100,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "require_logo_top_layer",
             "require_warning_top_layer",
             "enforce_material_safe_area",
+            "preserve_material_size",
+            "reposition_before_scale",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise RenderError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, material size must be preserved before limited scale-down, and source_black_bar_check must be error"
         )
     return policy
 
@@ -279,6 +289,7 @@ def apply_material_safe_area(
     safe_height = safe_bottom - safe_top
     def adjusted_transform(
         *,
+        material_name: str,
         visible_x: float,
         visible_y: float,
         visible_width: float,
@@ -293,7 +304,40 @@ def apply_material_safe_area(
         )
         if not violates:
             return None
+        if (
+            policy["reposition_before_scale"]
+            and visible_width <= safe_width
+            and visible_height <= safe_height
+        ):
+            repositioned_x = min(
+                max(visible_x, safe_left),
+                safe_right - visible_width,
+            )
+            repositioned_y = min(
+                max(visible_y, safe_top),
+                safe_bottom - visible_height,
+            )
+            return {
+                "crop": crop,
+                "width": max(1, int(round(visible_width))),
+                "height": max(1, int(round(visible_height))),
+                "x": int(round(repositioned_x)),
+                "y": int(round(repositioned_y)),
+                "scale": 1.0,
+                "resized": False,
+                "reason": "reposition_only_to_avoid_logo_and_warning_regions",
+            }
+
         scale = min(safe_width / visible_width, safe_height / visible_height, 1.0)
+        if (
+            policy["preserve_material_size"]
+            and scale < policy["minimum_material_scale"] - 1e-6
+        ):
+            raise RenderError(
+                f"Material {material_name!r} overlaps the logo/warning protection area and would require "
+                f"scaling to {scale:.3f}, below the configured minimum "
+                f"{policy['minimum_material_scale']:.3f}; adjust its timeline position or source asset"
+            )
         target_width = max(1, int(round(visible_width * scale)))
         target_height = max(1, int(round(visible_height * scale)))
         return {
@@ -302,7 +346,9 @@ def apply_material_safe_area(
             "height": target_height,
             "x": int(round(safe_left + (safe_width - target_width) / 2)),
             "y": int(round(safe_top + (safe_height - target_height) / 2)),
-            "reason": "avoid_logo_and_warning_regions",
+            "scale": round(scale, 4),
+            "resized": scale < 0.9999,
+            "reason": "limited_scale_to_avoid_logo_and_warning_regions",
         }
 
     prepared: list[dict[str, Any]] = []
@@ -322,6 +368,7 @@ def apply_material_safe_area(
                 scale_x = canvas_width / source_width
                 scale_y = canvas_height / source_height
                 transform = adjusted_transform(
+                    material_name=str(item.get("name", item.get("path", "unnamed"))),
                     visible_x=bx * scale_x,
                     visible_y=by * scale_y,
                     visible_width=bbox_width * scale_x,
@@ -330,6 +377,7 @@ def apply_material_safe_area(
                 )
             else:
                 transform = adjusted_transform(
+                    material_name=str(item.get("name", item.get("path", "unnamed"))),
                     visible_x=0,
                     visible_y=0,
                     visible_width=canvas_width,
@@ -341,6 +389,7 @@ def apply_material_safe_area(
             target_width = source_width * scale
             target_height = source_height * scale
             transform = adjusted_transform(
+                material_name=str(item.get("name", item.get("path", "unnamed"))),
                 visible_x=(canvas_width - target_width) / 2,
                 visible_y=350,
                 visible_width=target_width,
@@ -351,6 +400,7 @@ def apply_material_safe_area(
             target_width = 230.0
             target_height = source_height * target_width / source_width
             transform = adjusted_transform(
+                material_name=str(item.get("name", item.get("path", "unnamed"))),
                 visible_x=float(item.get("x", 95)),
                 visible_y=720,
                 visible_width=target_width,
@@ -359,6 +409,7 @@ def apply_material_safe_area(
             )
         elif layout == "cta_icon":
             transform = adjusted_transform(
+                material_name=str(item.get("name", item.get("path", "unnamed"))),
                 visible_x=(canvas_width - 300) / 2,
                 visible_y=650,
                 visible_width=300,
