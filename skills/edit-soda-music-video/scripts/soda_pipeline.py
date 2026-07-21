@@ -148,11 +148,8 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "top": int(safe_area_raw.get("top", 320)),
             "bottom": int(safe_area_raw.get("bottom", 180)),
         }
-        minimum_material_scale = float(raw.get("minimum_material_scale", 0.85))
     except (TypeError, ValueError) as exc:
-        raise PipelineError(
-            "visual_policy.material_safe_area margins must be integers and minimum_material_scale must be numeric"
-        ) from exc
+        raise PipelineError("visual_policy.material_safe_area margins must be integers") from exc
     if any(value < 0 for value in safe_area.values()):
         raise PipelineError("visual_policy.material_safe_area margins must be non-negative")
     canvas_width = int(config.get("width", 1080))
@@ -162,8 +159,6 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         or safe_area["top"] + safe_area["bottom"] >= canvas_height
     ):
         raise PipelineError("visual_policy.material_safe_area leaves no usable material area")
-    if not 0.5 <= minimum_material_scale <= 1.0:
-        raise PipelineError("visual_policy.minimum_material_scale must be between 0.5 and 1.0")
     policy = {
         "forbid_generated_black_bars": bool(raw.get("forbid_generated_black_bars", True)),
         "forbid_caption_backplates": bool(raw.get("forbid_caption_backplates", True)),
@@ -174,7 +169,6 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
         "preserve_material_size": bool(raw.get("preserve_material_size", True)),
         "reposition_before_scale": bool(raw.get("reposition_before_scale", True)),
-        "minimum_material_scale": minimum_material_scale,
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -192,7 +186,7 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise PipelineError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, material size must be preserved before limited scale-down, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
         )
     return policy
 
@@ -471,7 +465,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             "The skill stores asset categories only; pass task-specific --asset-root, --bgm, and --timeline-json values.",
             "Internal asset labels and file names must not bypass final visual, subtitle, or speech compliance checks.",
             "Caption backplates are forbidden; captions require a 2-3px black outline, shadow=0, and a layer above all materials.",
-            "Material size is preserved by default; the renderer repositions materials before any limited scale-down, and only scales when needed to avoid the logo or warning protection regions.",
+            "Material size is preserved by default; the renderer repositions first and, only when required, scales to the largest size that fits outside the logo and warning protection regions without a fixed scale threshold.",
         ],
     }
 

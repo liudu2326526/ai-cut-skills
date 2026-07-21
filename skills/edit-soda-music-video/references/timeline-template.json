@@ -70,7 +70,6 @@
     "enforce_material_safe_area": true,
     "preserve_material_size": true,
     "reposition_before_scale": true,
-    "minimum_material_scale": 0.85,
     "material_safe_area": {
       "left": 48,
       "right": 48,
