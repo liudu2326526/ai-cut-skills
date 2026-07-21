@@ -70,6 +70,7 @@
     "enforce_material_safe_area": true,
     "preserve_material_size": true,
     "reposition_before_scale": true,
+    "match_materials_only_for_benefit_points": true,
     "material_safe_area": {
       "left": 48,
       "right": 48,

@@ -4,7 +4,7 @@
 
 渲染器检查 `${CODEX_HOME:-$HOME/.codex}/skills/video-motion-effects`。当 Skill、Node、Chrome 和 Remotion 固定依赖均可用时，从其 `list-effects` 返回值中随机选择效果；当前正式效果包括 `dynamic_shrink`、`bottom_rise`、`perspective_settle`、`flash_stretch` 和 `page_curl`。
 
-Remotion 只生成短透明 ProRes 4444 入场片段。物料稳定布局默认保持原尺寸，只有在确实碰到 logo/警示语保护区且平移无法解决时才缩放到不遮挡品牌区域的最大等比尺寸；不设置固定缩放上限或下限。FFmpeg 合成时再把整个 Alpha 动效层裁切到素材可用区并透明补回全画布，防止放大、拖影、透视或卷页过程进入 logo 和警示语保护区。随后在动效素材上方绘制字幕与 CTA，再叠加 logo，最后绘制警示语。
+Remotion 只生成短透明 ProRes 4444 入场片段。入口素材先读取 Manifest 的 `effective_region`，只裁切人物、图标、文字、UI 等真实内容参与动效；源画布和空白留边不参与碰撞或动效尺寸计算。只有有效内容真实碰到 logo/警示语保护区且移动无法解决时才缩放整个素材到最大安全尺寸。FFmpeg 合成时再限制动效的有效内容不进入品牌保护区。随后在动效素材上方绘制字幕与 CTA，再叠加 logo，最后绘制警示语。
 
 ## 时间线配置
 

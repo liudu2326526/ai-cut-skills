@@ -2,7 +2,7 @@
 """Standalone FFmpeg renderer for the Soda Music mixed-cut skill.
 
 Requires only Python's standard library, ffmpeg, ffprobe, an input video, a
-caller-supplied BGM file, asset directory, and timeline JSON file.
+caller-supplied BGM file, asset directory, understood asset manifest, and timeline JSON file.
 """
 
 from __future__ import annotations
@@ -83,6 +83,9 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
         "preserve_material_size": bool(raw.get("preserve_material_size", True)),
         "reposition_before_scale": bool(raw.get("reposition_before_scale", True)),
+        "match_materials_only_for_benefit_points": bool(
+            raw.get("match_materials_only_for_benefit_points", True)
+        ),
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -97,10 +100,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "enforce_material_safe_area",
             "preserve_material_size",
             "reposition_before_scale",
+            "match_materials_only_for_benefit_points",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise RenderError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
         )
     return policy
 
@@ -203,6 +207,17 @@ def load_timeline(path: Path) -> dict[str, Any]:
     if not 0.5 <= speed <= 2.0:
         raise RenderError("speed must be between 0.5 and 2.0 for FFmpeg atempo")
     policy = resolve_visual_policy(data)
+    for index, material in enumerate(data.get("materials", [])):
+        if not isinstance(material, dict):
+            raise RenderError(f"materials[{index}] must be an object")
+        if str(material.get("semantic_role", "")) != "benefit_point":
+            raise RenderError(
+                f"materials[{index}] must use semantic_role=benefit_point; non-benefit narration must not match supplemental materials"
+            )
+        if not str(material.get("matched_benefit_text", "")).strip():
+            raise RenderError(
+                f"materials[{index}] must record matched_benefit_text from the benefit-point narration"
+            )
     style = data.get("font", {}).get("caption_style", {})
     if not isinstance(style, dict):
         raise RenderError("font.caption_style must be an object")
@@ -235,6 +250,91 @@ def resolve_assets(config: dict[str, Any], asset_root: Path, logo_variant: str) 
     return resolved
 
 
+def parse_effective_region(
+    raw: Any,
+    source_width: int,
+    source_height: int,
+    *,
+    label: str,
+) -> dict[str, float | str]:
+    if not isinstance(raw, dict):
+        raise RenderError(f"Missing effective_region for material: {label}")
+    try:
+        x = float(raw["x"])
+        y = float(raw["y"])
+        width = float(raw["width"])
+        height = float(raw["height"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RenderError(f"Invalid effective_region for material: {label}") from exc
+    coordinate_space = str(raw.get("coordinate_space", "source_pixels"))
+    if (
+        coordinate_space != "source_pixels"
+        or x < 0
+        or y < 0
+        or width <= 0
+        or height <= 0
+        or x + width > source_width + 1
+        or y + height > source_height + 1
+    ):
+        raise RenderError(
+            f"effective_region must be a positive source_pixels rectangle inside {source_width}x{source_height}: {label}"
+        )
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "coordinate_space": "source_pixels",
+    }
+
+
+def attach_manifest_effective_regions(
+    materials: list[dict[str, Any]],
+    manifest_path: Path,
+    asset_root: Path,
+) -> list[dict[str, Any]]:
+    if not manifest_path.exists():
+        raise RenderError(f"Asset manifest not found: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RenderError(f"Asset manifest could not be read: {manifest_path}: {exc}") from exc
+    manifest_root = Path(str(manifest.get("asset_root", ""))).expanduser().resolve()
+    if manifest_root != asset_root:
+        raise RenderError(
+            f"Asset manifest root does not match --asset-root: {manifest_root} != {asset_root}"
+        )
+    records = {
+        str(item.get("relative_path")): item
+        for item in manifest.get("assets", [])
+        if isinstance(item, dict) and item.get("relative_path")
+    }
+    prepared: list[dict[str, Any]] = []
+    for material in materials:
+        item = dict(material)
+        path = Path(item["path"]).resolve()
+        try:
+            relative = path.relative_to(asset_root).as_posix()
+        except ValueError as exc:
+            raise RenderError(f"Material is outside the manifest asset root: {path}") from exc
+        record = records.get(relative)
+        if record is None:
+            raise RenderError(f"Material is not tracked by the asset manifest: {relative}")
+        source = media_summary(path)
+        source_width = int(source.get("width") or 0)
+        source_height = int(source.get("height") or 0)
+        if source_width <= 0 or source_height <= 0:
+            raise RenderError(f"Unable to read material dimensions: {path}")
+        item["effective_region"] = parse_effective_region(
+            record.get("effective_region"),
+            source_width,
+            source_height,
+            label=relative,
+        )
+        prepared.append(item)
+    return prepared
+
+
 def validate_files(input_path: Path, bgm_path: Path, assets: dict[str, Any]) -> None:
     paths = [input_path, bgm_path, assets["font"], assets["brand_font"], assets["logo"], assets["tail"]]
     paths.extend(item["path"] for item in assets["materials"])
@@ -246,26 +346,6 @@ def validate_files(input_path: Path, bgm_path: Path, assets: dict[str, Any]) -> 
 def has_alpha_channel(pix_fmt: str | None) -> bool:
     value = (pix_fmt or "").lower()
     return value in {"rgba", "bgra", "argb", "abgr", "ya8", "ya16be", "ya16le"} or value.startswith(("yuva", "gbrap"))
-
-
-def alpha_bbox(path: Path) -> tuple[int, int, int, int] | None:
-    info = media_summary(path)
-    if not has_alpha_channel(str(info.get("pix_fmt") or "")):
-        return None
-    result = subprocess.run(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "info", "-i", str(path),
-            "-vf", "alphaextract,bbox=min_val=1", "-frames:v", "1", "-f", "null", "-",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    match = re.search(r"x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+) w:(\d+) h:(\d+)", result.stderr)
-    if not match:
-        return None
-    x1, _x2, y1, _y2, bbox_width, bbox_height = (int(value) for value in match.groups())
-    return x1, y1, bbox_width, bbox_height
 
 
 def apply_material_safe_area(
@@ -282,58 +362,42 @@ def apply_material_safe_area(
     safe_bottom = canvas_height - int(margins["bottom"])
     safe_width = safe_right - safe_left
     safe_height = safe_bottom - safe_top
-    def adjusted_transform(
-        *,
-        visible_x: float,
-        visible_y: float,
-        visible_width: float,
-        visible_height: float,
-        crop: list[int] | None,
-    ) -> dict[str, Any] | None:
-        violates = (
-            visible_x < safe_left
-            or visible_y < safe_top
-            or visible_x + visible_width > safe_right
-            or visible_y + visible_height > safe_bottom
-        )
-        if not violates:
-            return None
-        if (
-            policy["reposition_before_scale"]
-            and visible_width <= safe_width
-            and visible_height <= safe_height
-        ):
-            repositioned_x = min(
-                max(visible_x, safe_left),
-                safe_right - visible_width,
-            )
-            repositioned_y = min(
-                max(visible_y, safe_top),
-                safe_bottom - visible_height,
-            )
-            return {
-                "crop": crop,
-                "width": max(1, int(round(visible_width))),
-                "height": max(1, int(round(visible_height))),
-                "x": int(round(repositioned_x)),
-                "y": int(round(repositioned_y)),
-                "scale": 1.0,
-                "resized": False,
-                "reason": "reposition_only_to_avoid_logo_and_warning_regions",
-            }
 
-        scale = min(safe_width / visible_width, safe_height / visible_height, 1.0)
-        target_width = max(1, int(round(visible_width * scale)))
-        target_height = max(1, int(round(visible_height * scale)))
+    def base_placement(
+        layout: str,
+        item: dict[str, Any],
+        source_width: int,
+        source_height: int,
+    ) -> tuple[float, float, float, float]:
+        if layout == "full_alpha":
+            return 0.0, 0.0, float(canvas_width), float(canvas_height)
+        if layout == "phone":
+            scale = min(650 / source_width, 1050 / source_height)
+            width = source_width * scale
+            height = source_height * scale
+            return (canvas_width - width) / 2, 350.0, width, height
+        if layout == "icon":
+            width = 230.0
+            height = source_height * width / source_width
+            return float(item.get("x", 95)), 720.0, width, height
+        if layout == "cta_icon":
+            return (canvas_width - 300) / 2, 650.0, 300.0, 300.0
+        raise RenderError(f"Unsupported material layout: {layout}")
+
+    def map_effective_bounds(
+        region: dict[str, float | str],
+        asset_x: float,
+        asset_y: float,
+        asset_width: float,
+        asset_height: float,
+        source_width: int,
+        source_height: int,
+    ) -> dict[str, float]:
         return {
-            "crop": crop,
-            "width": target_width,
-            "height": target_height,
-            "x": int(round(safe_left + (safe_width - target_width) / 2)),
-            "y": int(round(safe_top + (safe_height - target_height) / 2)),
-            "scale": round(scale, 4),
-            "resized": scale < 0.9999,
-            "reason": "largest_safe_scale_to_avoid_logo_and_warning_regions",
+            "x": asset_x + float(region["x"]) * asset_width / source_width,
+            "y": asset_y + float(region["y"]) * asset_height / source_height,
+            "width": float(region["width"]) * asset_width / source_width,
+            "height": float(region["height"]) * asset_height / source_height,
         }
 
     prepared: list[dict[str, Any]] = []
@@ -345,59 +409,101 @@ def apply_material_safe_area(
         if source_width <= 0 or source_height <= 0:
             raise RenderError(f"Unable to read material dimensions: {item.get('path')}")
         layout = str(item.get("layout"))
-        transform: dict[str, Any] | None = None
-        if layout == "full_alpha":
-            bbox = alpha_bbox(Path(item["path"])) if str(item.get("kind")) == "image" else None
-            if bbox:
-                bx, by, bbox_width, bbox_height = bbox
-                scale_x = canvas_width / source_width
-                scale_y = canvas_height / source_height
-                transform = adjusted_transform(
-                    visible_x=bx * scale_x,
-                    visible_y=by * scale_y,
-                    visible_width=bbox_width * scale_x,
-                    visible_height=bbox_height * scale_y,
-                    crop=[bx, by, bbox_width, bbox_height],
-                )
-            else:
-                transform = adjusted_transform(
-                    visible_x=0,
-                    visible_y=0,
-                    visible_width=canvas_width,
-                    visible_height=canvas_height,
-                    crop=None,
-                )
-        elif layout == "phone":
-            scale = min(650 / source_width, 1050 / source_height)
-            target_width = source_width * scale
-            target_height = source_height * scale
-            transform = adjusted_transform(
-                visible_x=(canvas_width - target_width) / 2,
-                visible_y=350,
-                visible_width=target_width,
-                visible_height=target_height,
-                crop=None,
+        region = parse_effective_region(
+            item.get("effective_region"),
+            source_width,
+            source_height,
+            label=str(item.get("path")),
+        )
+        asset_x, asset_y, asset_width, asset_height = base_placement(
+            layout,
+            item,
+            source_width,
+            source_height,
+        )
+        effective = map_effective_bounds(
+            region,
+            asset_x,
+            asset_y,
+            asset_width,
+            asset_height,
+            source_width,
+            source_height,
+        )
+        item["effective_region_canvas"] = {
+            key: round(value, 4) for key, value in effective.items()
+        }
+        violates = (
+            effective["x"] < safe_left
+            or effective["y"] < safe_top
+            or effective["x"] + effective["width"] > safe_right
+            or effective["y"] + effective["height"] > safe_bottom
+        )
+        if not violates:
+            item["safe_area_decision"] = "keep_original_size_effective_region_is_clear"
+            prepared.append(item)
+            continue
+
+        if (
+            policy["reposition_before_scale"]
+            and effective["width"] <= safe_width
+            and effective["height"] <= safe_height
+        ):
+            target_effective_x = min(
+                max(effective["x"], safe_left),
+                safe_right - effective["width"],
             )
-        elif layout == "icon":
-            target_width = 230.0
-            target_height = source_height * target_width / source_width
-            transform = adjusted_transform(
-                visible_x=float(item.get("x", 95)),
-                visible_y=720,
-                visible_width=target_width,
-                visible_height=target_height,
-                crop=None,
+            target_effective_y = min(
+                max(effective["y"], safe_top),
+                safe_bottom - effective["height"],
             )
-        elif layout == "cta_icon":
-            transform = adjusted_transform(
-                visible_x=(canvas_width - 300) / 2,
-                visible_y=650,
-                visible_width=300,
-                visible_height=300,
-                crop=None,
+            delta_x = target_effective_x - effective["x"]
+            delta_y = target_effective_y - effective["y"]
+            transform = {
+                "width": max(1, int(round(asset_width))),
+                "height": max(1, int(round(asset_height))),
+                "x": int(round(asset_x + delta_x)),
+                "y": int(round(asset_y + delta_y)),
+                "scale": 1.0,
+                "resized": False,
+                "effective_bounds": {
+                    "x": round(target_effective_x, 4),
+                    "y": round(target_effective_y, 4),
+                    "width": round(effective["width"], 4),
+                    "height": round(effective["height"], 4),
+                },
+                "reason": "reposition_only_when_effective_content_overlaps_brand_regions",
+            }
+        else:
+            scale = min(
+                safe_width / effective["width"],
+                safe_height / effective["height"],
+                1.0,
             )
-        if transform:
-            item["safe_transform"] = transform
+            target_asset_width = asset_width * scale
+            target_asset_height = asset_height * scale
+            target_effective_width = effective["width"] * scale
+            target_effective_height = effective["height"] * scale
+            target_effective_x = safe_left + (safe_width - target_effective_width) / 2
+            target_effective_y = safe_top + (safe_height - target_effective_height) / 2
+            region_offset_x = float(region["x"]) * target_asset_width / source_width
+            region_offset_y = float(region["y"]) * target_asset_height / source_height
+            transform = {
+                "width": max(1, int(round(target_asset_width))),
+                "height": max(1, int(round(target_asset_height))),
+                "x": int(round(target_effective_x - region_offset_x)),
+                "y": int(round(target_effective_y - region_offset_y)),
+                "scale": round(scale, 4),
+                "resized": scale < 0.9999,
+                "effective_bounds": {
+                    "x": round(target_effective_x, 4),
+                    "y": round(target_effective_y, 4),
+                    "width": round(target_effective_width, 4),
+                    "height": round(target_effective_height, 4),
+                },
+                "reason": "largest_safe_scale_only_when_effective_content_cannot_be_repositioned",
+            }
+        item["safe_transform"] = transform
         prepared.append(item)
     return prepared
 
@@ -1002,6 +1108,8 @@ def build_report(
         "opening_policy": "direct-to-digital-human",
         "caption_layer": "above-all-materials",
         "caption_text_policy": "caller-script text filled into actual Whisper word timestamps; punctuation removed at render",
+        "material_matching_policy": "supplemental materials only on explicit benefit-point narration",
+        "material_collision_policy": "only effective_region content can trigger repositioning or scaling",
         "logo_layer": "above-materials-captions-and-cta",
         "warning_layer": "topmost-when-enabled",
         "layer_order": ["base", "materials", "captions_and_cta", "logo", "warning"],
@@ -1030,6 +1138,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--asset-manifest", type=Path, required=True)
     parser.add_argument("--bgm", type=Path, required=True)
     parser.add_argument("--timeline-json", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -1063,6 +1172,7 @@ def main() -> int:
     require_binary("ffmpeg")
     input_path = args.input.expanduser().resolve()
     asset_root = args.asset_root.expanduser().resolve()
+    asset_manifest_path = args.asset_manifest.expanduser().resolve()
     bgm_path = args.bgm.expanduser().resolve()
     timeline_path = args.timeline_json.expanduser().resolve()
     output_path = args.output.expanduser().resolve()
@@ -1078,6 +1188,11 @@ def main() -> int:
     if not 0.5 <= speed <= 2.0:
         raise RenderError("speed must be between 0.5 and 2.0 for FFmpeg atempo")
     assets = resolve_assets(config, asset_root, args.logo_variant)
+    assets["materials"] = attach_manifest_effective_regions(
+        assets["materials"],
+        asset_manifest_path,
+        asset_root,
+    )
     validate_files(input_path, bgm_path, assets)
     logo_info = media_summary(assets["logo"])
     logo_mode = resolve_logo_mode(config, logo_info)

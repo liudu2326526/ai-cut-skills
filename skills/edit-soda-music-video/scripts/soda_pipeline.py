@@ -176,6 +176,9 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "enforce_material_safe_area": bool(raw.get("enforce_material_safe_area", True)),
         "preserve_material_size": bool(raw.get("preserve_material_size", True)),
         "reposition_before_scale": bool(raw.get("reposition_before_scale", True)),
+        "match_materials_only_for_benefit_points": bool(
+            raw.get("match_materials_only_for_benefit_points", True)
+        ),
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -190,10 +193,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "enforce_material_safe_area",
             "preserve_material_size",
             "reposition_before_scale",
+            "match_materials_only_for_benefit_points",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise PipelineError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
         )
     return policy
 
@@ -290,6 +294,17 @@ def load_timeline_config(path: Path) -> dict[str, Any]:
             "Timeline JSON contains unresolved placeholders: " + ", ".join(placeholders)
         )
     policy = resolve_visual_policy(config)
+    for index, material in enumerate(config.get("materials", [])):
+        if not isinstance(material, dict):
+            raise PipelineError(f"materials[{index}] must be an object")
+        if str(material.get("semantic_role", "")) != "benefit_point":
+            raise PipelineError(
+                f"materials[{index}] must use semantic_role=benefit_point; non-benefit narration must not match supplemental materials"
+            )
+        if not str(material.get("matched_benefit_text", "")).strip():
+            raise PipelineError(
+                f"materials[{index}] must record matched_benefit_text from the benefit-point narration"
+            )
     style = config.get("font", {}).get("caption_style", {})
     if not isinstance(style, dict):
         raise PipelineError("font.caption_style must be an object")
@@ -380,6 +395,8 @@ def validate_asset_understanding(
         "status": "missing",
         "visual_asset_count": 0,
         "missing_descriptions": [],
+        "missing_effective_regions": [],
+        "invalid_effective_regions": [],
         "untracked_timeline_visual_assets": [],
         "errors": [],
     }
@@ -422,6 +439,50 @@ def validate_asset_understanding(
     if missing_descriptions:
         report["errors"].append(
             "素材理解未完成，以下图片/视频缺少 description：" + ", ".join(missing_descriptions)
+        )
+
+    missing_effective_regions: list[str] = []
+    invalid_effective_regions: list[str] = []
+    for item in visual_assets:
+        relative_path = str(item.get("relative_path", ""))
+        region = item.get("effective_region")
+        if not isinstance(region, dict):
+            missing_effective_regions.append(relative_path)
+            continue
+        try:
+            x = float(region["x"])
+            y = float(region["y"])
+            width = float(region["width"])
+            height = float(region["height"])
+        except (KeyError, TypeError, ValueError):
+            invalid_effective_regions.append(relative_path)
+            continue
+        media = item.get("media", {}) if isinstance(item.get("media"), dict) else {}
+        source_width = float(media.get("width") or 0)
+        source_height = float(media.get("height") or 0)
+        coordinate_space = str(region.get("coordinate_space", "source_pixels"))
+        invalid = (
+            coordinate_space != "source_pixels"
+            or x < 0
+            or y < 0
+            or width <= 0
+            or height <= 0
+            or (source_width > 0 and x + width > source_width + 1)
+            or (source_height > 0 and y + height > source_height + 1)
+        )
+        if invalid:
+            invalid_effective_regions.append(relative_path)
+    report["missing_effective_regions"] = sorted(missing_effective_regions)
+    report["invalid_effective_regions"] = sorted(invalid_effective_regions)
+    if missing_effective_regions:
+        report["errors"].append(
+            "素材有效区域理解未完成，以下图片/视频缺少 effective_region："
+            + ", ".join(sorted(missing_effective_regions))
+        )
+    if invalid_effective_regions:
+        report["errors"].append(
+            "以下素材的 effective_region 不是有效的 source_pixels 边界："
+            + ", ".join(sorted(invalid_effective_regions))
         )
 
     by_relative_path = {
@@ -588,7 +649,8 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             "Internal asset labels and file names must not bypass final visual, subtitle, or speech compliance checks.",
             "Caption backplates are forbidden; captions require a 2-3px black outline, shadow=0, and a layer above all materials.",
             "Material size is preserved by default; the renderer repositions first and, only when required, scales to the largest size that fits outside the logo and warning protection regions without a fixed scale threshold.",
-            "Rendering is blocked until every image/video in the synced Manifest has a model-written description and all timeline visual assets are tracked by that Manifest.",
+            "Rendering is blocked until every image/video in the synced Manifest has a model-written description and source-pixel effective_region, and all timeline visual assets are tracked by that Manifest.",
+            "Every supplemental material must be tied to explicit benefit-point narration through semantic_role=benefit_point and matched_benefit_text.",
         ],
     }
 
@@ -1452,6 +1514,8 @@ def cmd_render(args: argparse.Namespace) -> int:
         str(input_path),
         "--asset-root",
         str(args.asset_root.expanduser().resolve()),
+        "--asset-manifest",
+        str(args.asset_manifest.expanduser().resolve()),
         "--bgm",
         str(bgm_path),
         "--timeline-json",

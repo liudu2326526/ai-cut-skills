@@ -246,7 +246,26 @@ def _layout_for_material(
     layout = str(material["layout"])
     source_crop: list[int] | None = None
     safe_transform = material.get("safe_transform")
-    if isinstance(safe_transform, dict):
+    effective_region = material.get("effective_region")
+    effective_canvas = (
+        safe_transform.get("effective_bounds")
+        if isinstance(safe_transform, dict)
+        else material.get("effective_region_canvas")
+    )
+    if isinstance(effective_region, dict) and isinstance(effective_canvas, dict):
+        target_width = float(effective_canvas["width"])
+        target_height = float(effective_canvas["height"])
+        x = float(effective_canvas["x"])
+        y = float(effective_canvas["y"])
+        origin_x = target_width / 2
+        origin_y = target_height / 2
+        source_crop = [
+            int(round(float(effective_region["x"]))),
+            int(round(float(effective_region["y"]))),
+            max(1, int(round(float(effective_region["width"])))),
+            max(1, int(round(float(effective_region["height"])))),
+        ]
+    elif isinstance(safe_transform, dict):
         target_width = float(safe_transform["width"])
         target_height = float(safe_transform["height"])
         x = float(safe_transform["x"])
