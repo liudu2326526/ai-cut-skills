@@ -16,17 +16,17 @@
 
 ## 执行模型内容理解
 
-基础 Manifest 不调用另一个大模型。执行 Skill 的模型在读取 Manifest 后，直接使用 Read 工具逐张查看新增、修改或缺少理解结果的图片，并查看视频代表帧，然后把准确中文 `description` 和源像素坐标的 `effective_region` 写回对应素材记录。`effective_region` 是真正承载人物、图标、文字、UI 等信息的最小矩形联合边界；透明留白、纯色空白边距和无内容画布不计入。不要通过素材理解脚本、API 端点或向量库完成这一步，也不要生成 `keywords` 或 `recommended_usage`。
+基础 Manifest 不调用另一个大模型。执行 Skill 的模型在读取 Manifest 后，直接使用 Read 工具逐张查看新增、修改或缺少理解结果的图片，并查看视频代表帧，然后把准确中文 `description` 和源像素坐标的 `effective_region` 写回对应素材记录。description 必须按 [asset-content-understanding.md](asset-content-understanding.md) 覆盖适用的页面类型、布局数量、关键文字和数字、当前状态及可表达语义，并在写回前完成质量自检；只写宽泛主题不算完成理解。`effective_region` 是真正承载人物、图标、文字、UI 等信息的最小矩形联合边界；透明留白、纯色空白边距和无内容画布不计入。不要通过素材理解脚本、API 端点或向量库完成这一步，也不要生成 `keywords` 或 `recommended_usage`。
 
 ## 生成前门禁
 
-正式生成视频前，不能只检查时间轴中“看起来会用到”的几张图。`preflight` 和 `render` 会验证：
+正式生成视频前，不能只检查时间轴中“看起来会用到”的几张图。特殊匹配素材也必须先进入同一个 Manifest，并完成 description/effective_region；特殊规则只提高选材优先级，不绕过素材理解。`preflight` 和 `render` 会验证：
 
 - Manifest 文件存在，且 `asset_root` 与本次 `--asset-root` 一致；
 - Manifest 中所有图片/视频记录都有非空 `description` 和合法的 `effective_region`；
 - 时间轴引用的普通素材、logo 和尾帧都能在 Manifest 中找到。
 
-门禁失败时，执行模型必须先用 Read 逐张理解缺失素材、把中文 description 和有效区域写回 Manifest，再重新运行预检。不能通过省略 Manifest、继续使用空字段、改用文件名匹配或关闭预检绕过。
+门禁失败或人工检查发现 description 空泛时，执行模型必须先用 Read 逐张理解素材、按质量清单重写中文 description 和有效区域，再重新运行预检。不能通过省略 Manifest、继续使用空字段、改用文件名匹配或关闭预检绕过。确定性预检只检查字段是否非空，语义完整性必须由执行模型逐项复核，不能把“非空”当作“理解完成”。
 
 ## 状态
 

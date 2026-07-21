@@ -25,6 +25,7 @@ from motion_effects_bridge import (
     plan_motion_effects,
     render_motion_effects,
 )
+from special_material_matches import special_match_metadata_errors
 
 
 class RenderError(RuntimeError):
@@ -218,6 +219,9 @@ def load_timeline(path: Path) -> dict[str, Any]:
             raise RenderError(
                 f"materials[{index}] must record matched_benefit_text from the benefit-point narration"
             )
+    special_match_errors = special_match_metadata_errors(data.get("materials", []))
+    if special_match_errors:
+        raise RenderError("; ".join(special_match_errors))
     style = data.get("font", {}).get("caption_style", {})
     if not isinstance(style, dict):
         raise RenderError("font.caption_style must be an object")

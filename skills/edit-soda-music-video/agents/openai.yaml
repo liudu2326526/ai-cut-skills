@@ -1,4 +1,4 @@
 interface:
   display_name: "汽水音乐混剪成片"
-  short_description: "利益点选材、有效区域避挡、Whisper 词级字幕与 Remotion 混剪"
-  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪；生成前用 Read 为全部图片/视频写入 description 和源像素 effective_region；只在明确利益点台词中按 description 匹配普通素材，非利益点保持数字人；遮挡和缩放只检查 effective_region 的真实内容，空白画布不算遮挡；若提供口播，必须对当前输入执行 Whisper --word_timestamps True，再把台词填入实际词级时间戳。"
+  short_description: "特殊利益点选材、有效区域避挡、Whisper 字幕与 Remotion 混剪"
+  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪；生成前用 Read 为全部图片/视频写入 description 和源像素 effective_region；description 必须具体覆盖页面/素材类型、布局与分组数量、清晰可见的关键文字和数字、动作或状态、可直接表达的口播语义，禁止只写小额金额、多个按钮、展示功能等泛化内容，写回前按 asset-content-understanding.md 自检；只在明确利益点台词中选材，并先检查 special-material-matches.md：说到满三毛或满 0.3 元可提现时，优先使用素材库中的完整提现页或 Read 确认的完整轻度变体，同时写 special_match_rule=withdraw_0_3；不做 SHA-256 校验；未命中特殊规则才按 description 做普通语义匹配；非利益点保持数字人；若提供口播，必须对当前输入执行 Whisper --word_timestamps True，再把台词填入实际词级时间戳。"

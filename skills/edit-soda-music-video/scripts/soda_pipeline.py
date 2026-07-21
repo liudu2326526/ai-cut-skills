@@ -28,6 +28,7 @@ from motion_effects_bridge import (
     inspect_motion_skill,
     resolve_motion_policy,
 )
+from special_material_matches import special_match_metadata_errors
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -305,6 +306,9 @@ def load_timeline_config(path: Path) -> dict[str, Any]:
             raise PipelineError(
                 f"materials[{index}] must record matched_benefit_text from the benefit-point narration"
             )
+    special_match_errors = special_match_metadata_errors(config.get("materials", []))
+    if special_match_errors:
+        raise PipelineError("; ".join(special_match_errors))
     style = config.get("font", {}).get("caption_style", {})
     if not isinstance(style, dict):
         raise PipelineError("font.caption_style must be an object")
