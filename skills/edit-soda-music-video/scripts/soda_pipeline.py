@@ -41,6 +41,11 @@ ARROW_CHARS = ("→", "←", "↑", "↓", "➜", "➡", "⇩", "⤵", "↘", "�
 THIRD_PARTY_TERMS = ("抖音", "剪映")
 DEFAULT_BGM_TARGET_LUFS = -28.0
 DEFAULT_BGM_FINE_VOLUME = 1.0
+DEFAULT_ASSET_MANIFEST_NAME = "soda_assets_manifest.json"
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".svg"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
+VISUAL_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
 
 class PipelineError(RuntimeError):
@@ -356,11 +361,119 @@ def estimate_render_duration(
     return input_duration / speed + float(tail_duration)
 
 
+def resolve_asset_manifest_path(timeline_path: Path, value: Path | None) -> Path:
+    if value is not None:
+        return value.expanduser().resolve()
+    return timeline_path.expanduser().resolve().parent / DEFAULT_ASSET_MANIFEST_NAME
+
+
+def validate_asset_understanding(
+    manifest_path: Path,
+    asset_root: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Gate rendering on a synced manifest whose visual assets have descriptions."""
+    report: dict[str, Any] = {
+        "manifest": str(manifest_path),
+        "asset_root": str(asset_root),
+        "ok": False,
+        "status": "missing",
+        "visual_asset_count": 0,
+        "missing_descriptions": [],
+        "untracked_timeline_visual_assets": [],
+        "errors": [],
+    }
+    if not manifest_path.exists():
+        report["errors"].append(
+            "素材 Manifest 不存在；先运行 sync-assets，再由执行模型用 Read 逐张理解所有图片和视频并写回 description。"
+        )
+        return report
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"素材 Manifest 无法读取：{exc}")
+        return report
+    if not isinstance(manifest, dict):
+        report["errors"].append("素材 Manifest 顶层必须是 JSON 对象。")
+        return report
+
+    manifest_root = Path(str(manifest.get("asset_root", ""))).expanduser().resolve()
+    if manifest_root != asset_root.expanduser().resolve():
+        report["errors"].append(
+            f"素材 Manifest 的 asset_root 与当前 --asset-root 不一致：{manifest_root} != {asset_root}。"
+        )
+    assets = manifest.get("assets", [])
+    if not isinstance(assets, list):
+        report["errors"].append("素材 Manifest 的 assets 必须是数组。")
+        return report
+
+    visual_assets = [
+        item
+        for item in assets
+        if isinstance(item, dict) and str(item.get("kind", "")).lower() in {"image", "video"}
+    ]
+    report["visual_asset_count"] = len(visual_assets)
+    missing_descriptions = sorted(
+        str(item.get("relative_path", ""))
+        for item in visual_assets
+        if not str(item.get("description", "")).strip()
+    )
+    report["missing_descriptions"] = missing_descriptions
+    if missing_descriptions:
+        report["errors"].append(
+            "素材理解未完成，以下图片/视频缺少 description：" + ", ".join(missing_descriptions)
+        )
+
+    by_relative_path = {
+        str(item.get("relative_path")): item
+        for item in visual_assets
+        if item.get("relative_path")
+    }
+    timeline_visual_refs: list[tuple[str, Path]] = []
+    for index, item in enumerate(config.get("materials", [])):
+        if not isinstance(item, dict) or not item.get("path"):
+            continue
+        timeline_visual_refs.append((f"materials[{index}].path", resolve_timeline_asset(asset_root, str(item["path"]))))
+    for key in ("white_path", "black_path"):
+        value = config.get("logo", {}).get(key)
+        if value:
+            timeline_visual_refs.append((f"logo.{key}", resolve_timeline_asset(asset_root, str(value))))
+    tail_value = config.get("tail", {}).get("path")
+    if tail_value:
+        timeline_visual_refs.append(("tail.path", resolve_timeline_asset(asset_root, str(tail_value))))
+
+    untracked: list[str] = []
+    for location, path in timeline_visual_refs:
+        if path.suffix.casefold() not in VISUAL_EXTENSIONS:
+            continue
+        try:
+            relative = path.relative_to(asset_root).as_posix()
+        except ValueError:
+            untracked.append(f"{location} -> {path}")
+            continue
+        record = by_relative_path.get(relative)
+        if record is None:
+            untracked.append(f"{location} -> {relative}")
+    report["untracked_timeline_visual_assets"] = sorted(untracked)
+    if untracked:
+        report["errors"].append(
+            "时间轴引用了未出现在 Manifest 的视觉素材：" + ", ".join(sorted(untracked))
+        )
+
+    report["status"] = "complete" if not report["errors"] else "incomplete"
+    report["ok"] = not report["errors"]
+    return report
+
+
 def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
     asset_root = args.asset_root.expanduser().resolve()
     bgm = args.bgm.expanduser().resolve() if args.bgm else None
     input_path = args.input.expanduser().resolve() if args.input else None
     timeline_path = args.timeline_json.expanduser().resolve()
+    manifest_path = resolve_asset_manifest_path(
+        timeline_path,
+        getattr(args, "asset_manifest", None),
+    )
     renderer = DEFAULT_RENDERER.resolve()
     logo_variant = args.logo_variant
 
@@ -370,6 +483,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
     visual_warnings: list[str] = []
     visual_policy: dict[str, Any] | None = None
     motion_effects: dict[str, Any] | None = None
+    asset_understanding: dict[str, Any] | None = None
 
     def check(name: str, path: Path, required: bool = True) -> None:
         checks.append(
@@ -384,6 +498,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
 
     check("renderer", renderer)
     check("asset_root", asset_root)
+    check("asset_manifest", manifest_path)
     check("timeline_json", timeline_path)
     if input_path:
         check("input", input_path)
@@ -402,6 +517,9 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             visual_errors.append(str(exc))
             motion_effects = {"ready": False, "error": str(exc)}
         visual_policy = resolve_visual_policy(config)
+        asset_understanding = validate_asset_understanding(manifest_path, asset_root, config)
+        if not asset_understanding["ok"]:
+            visual_errors.extend(str(item) for item in asset_understanding["errors"])
         for name, path in timeline_asset_paths(config, asset_root, logo_variant).items():
             check(name, path)
         if visual_policy["source_black_bar_check"] != "off" and shutil.which("ffmpeg"):
@@ -451,6 +569,8 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not missing and not missing_binaries and not visual_errors,
         "asset_root": str(asset_root),
+        "asset_manifest": str(manifest_path),
+        "asset_understanding": asset_understanding,
         "timeline_json": str(timeline_path),
         "renderer": str(renderer),
         "binaries": binaries,
@@ -468,6 +588,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             "Internal asset labels and file names must not bypass final visual, subtitle, or speech compliance checks.",
             "Caption backplates are forbidden; captions require a 2-3px black outline, shadow=0, and a layer above all materials.",
             "Material size is preserved by default; the renderer repositions first and, only when required, scales to the largest size that fits outside the logo and warning protection regions without a fixed scale threshold.",
+            "Rendering is blocked until every image/video in the synced Manifest has a model-written description and all timeline visual assets are tracked by that Manifest.",
         ],
     }
 
@@ -542,15 +663,19 @@ def run_silence_detect(source: Path, noise: str, minimum: float) -> list[dict[st
     return parse_silence_ranges((result.stderr or "") + "\n" + (result.stdout or ""))
 
 
-def whisper_word_gaps(
+def whisper_word_timestamps(
     source: Path,
     model: str,
     language: str,
-    minimum: float,
-    maximum: float,
+    *,
+    required: bool = False,
 ) -> tuple[list[dict[str, Any]], str | None]:
+    """Run the local Whisper CLI and return its actual word-level timings."""
     executable = shutil.which("whisper")
     if not executable:
+        message = "Whisper CLI not found; word-level timestamps are required for caller-supplied scripts."
+        if required:
+            raise PipelineError(message)
         return [], "Whisper CLI not found; word-level pause candidates were skipped."
     with tempfile.TemporaryDirectory(prefix="soda_whisper_") as temp_dir:
         result = run_command(
@@ -579,11 +704,17 @@ def whisper_word_gaps(
         json_files = sorted(Path(temp_dir).glob("*.json"))
         if result.returncode != 0 or not json_files:
             detail = (result.stderr or result.stdout or "unknown error").strip()
-            return [], f"Whisper word timestamps failed; continuing without them: {detail[:240]}"
+            message = f"Whisper word timestamps failed: {detail[:240]}"
+            if required:
+                raise PipelineError(message)
+            return [], f"{message}; continuing without them."
         try:
             data = json.loads(json_files[0].read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            return [], f"Whisper JSON could not be read; continuing without it: {exc}"
+            message = f"Whisper JSON could not be read: {exc}"
+            if required:
+                raise PipelineError(message)
+            return [], f"{message}; continuing without it."
 
     words: list[dict[str, float | str]] = []
     for segment in data.get("segments", []):
@@ -597,6 +728,24 @@ def whisper_word_gaps(
                     "word": str(word.get("word", "")).strip(),
                 }
             )
+    if not words:
+        message = "Whisper returned no word-level timestamps."
+        if required:
+            raise PipelineError(message)
+        return [], f"{message}; continuing without them."
+    return words, None
+
+
+def whisper_word_gaps(
+    source: Path,
+    model: str,
+    language: str,
+    minimum: float,
+    maximum: float,
+) -> tuple[list[dict[str, Any]], str | None]:
+    words, warning = whisper_word_timestamps(source, model, language)
+    if warning:
+        return [], warning
     gaps: list[dict[str, Any]] = []
     for previous, current in zip(words, words[1:]):
         gap = float(current["start"]) - float(previous["end"])
@@ -881,8 +1030,32 @@ def normalize_subtitle_text(text: str) -> str:
     return "\n".join(normalized_lines)
 
 
-def _match_text(text: str) -> str:
-    return re.sub(r"\s+", "", normalize_subtitle_text(text)).lower()
+def _alignment_units(text: str) -> list[str]:
+    """Split Chinese into characters while keeping latin/number runs intact."""
+    units: list[str] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if buffer:
+            units.append("".join(buffer).casefold())
+            buffer.clear()
+
+    for char in str(text):
+        category = unicodedata.category(char)
+        if char.isspace() or category.startswith("P"):
+            flush()
+            continue
+        is_cjk = "\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff"
+        if is_cjk:
+            flush()
+            units.append(char.casefold())
+        elif char.isalnum() or char == "_":
+            buffer.append(char)
+        else:
+            flush()
+            units.append(char.casefold())
+    flush()
+    return units
 
 
 def split_spoken_script_phrases(text: str) -> list[str]:
@@ -905,131 +1078,201 @@ def split_spoken_script_phrases(text: str) -> list[str]:
     return phrases
 
 
-def _partition_script_lines(
-    captions: list[dict[str, Any]],
-    script_lines: list[str],
-) -> list[str]:
-    """Map caller script lines onto existing caption time ranges in order."""
+def align_script_to_whisper_words(
+    script_text: str,
+    words: list[dict[str, Any]],
+    source_duration: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Use Whisper's real word timings as slots, then fill caller text into them."""
+    phrases = split_spoken_script_phrases(script_text)
+    phrase_units = [_alignment_units(phrase) for phrase in phrases]
+    script_units = [unit for group in phrase_units for unit in group]
+    if not script_units:
+        raise PipelineError("The supplied spoken script is empty after punctuation normalization")
+    if not words:
+        raise PipelineError("Whisper returned no word-level timestamps for the supplied script")
+
+    whisper_units: list[str] = []
+    whisper_unit_word_indices: list[int] = []
+    whisper_unit_ranges: list[tuple[float, float]] = []
+    for word_index, word in enumerate(words):
+        units = _alignment_units(str(word.get("word", "")))
+        word_start = float(word["start"])
+        word_end = float(word["end"])
+        word_duration = max(0.0, word_end - word_start)
+        for unit_index, unit in enumerate(units):
+            whisper_units.append(unit)
+            whisper_unit_word_indices.append(word_index)
+            unit_start = word_start + word_duration * unit_index / max(1, len(units))
+            unit_end = word_start + word_duration * (unit_index + 1) / max(1, len(units))
+            whisper_unit_ranges.append((unit_start, unit_end))
+    if not whisper_units:
+        raise PipelineError("Whisper returned word timestamps without usable word text")
+
+    script_times: list[tuple[float, float] | None] = [None] * len(script_units)
+    matcher = difflib.SequenceMatcher(None, script_units, whisper_units, autojunk=False)
+    fallback_duration = min(0.24, max(0.08, source_duration / max(1, len(words)) * 1.5))
+    exact_match_units = 0
+
+    def assign_range(script_start: int, script_end: int, whisper_start: int, whisper_end: int) -> None:
+        if script_start >= script_end:
+            return
+        whisper_ranges = whisper_unit_ranges[whisper_start:whisper_end]
+        if whisper_ranges:
+            for offset, script_index in enumerate(range(script_start, script_end)):
+                mapped_offset = min(
+                    len(whisper_ranges) - 1,
+                    math.floor(offset * len(whisper_ranges) / max(1, script_end - script_start)),
+                )
+                script_times[script_index] = whisper_ranges[mapped_offset]
+            return
+
+        previous_range = whisper_unit_ranges[whisper_start - 1] if whisper_start > 0 else None
+        next_range = whisper_unit_ranges[whisper_start] if whisper_start < len(whisper_unit_ranges) else None
+        if previous_range is not None and next_range is not None:
+            start = previous_range[1]
+            end = next_range[0]
+            if end <= start:
+                start, end = previous_range
+        elif previous_range is not None:
+            start = previous_range[1]
+            end = start + fallback_duration
+        elif next_range is not None:
+            end = next_range[0]
+            start = max(0.0, end - fallback_duration)
+        else:
+            start, end = 0.0, fallback_duration
+        for script_index in range(script_start, script_end):
+            script_times[script_index] = (start, end)
+
+    for tag, script_start, script_end, whisper_start, whisper_end in matcher.get_opcodes():
+        if tag == "equal":
+            exact_match_units += script_end - script_start
+        if tag in {"equal", "replace", "delete"}:
+            assign_range(script_start, script_end, whisper_start, whisper_end)
+
+    # Fill any residual unmatched units from the nearest actual Whisper slot.
+    for index, value in enumerate(script_times):
+        if value is not None:
+            continue
+        previous = next((script_times[pos] for pos in range(index - 1, -1, -1) if script_times[pos]), None)
+        following = next((script_times[pos] for pos in range(index + 1, len(script_times)) if script_times[pos]), None)
+        if previous and following:
+            script_times[index] = (previous[1], following[0]) if following[0] > previous[1] else previous
+        elif previous:
+            script_times[index] = (previous[1], previous[1] + fallback_duration)
+        elif following:
+            script_times[index] = (max(0.0, following[0] - fallback_duration), following[0])
+        else:
+            script_times[index] = (0.0, fallback_duration)
+
+    captions: list[dict[str, Any]] = []
+    cursor = 0
+    previous_end = 0.0
+    for phrase, units in zip(phrases, phrase_units):
+        count = len(units)
+        if not count:
+            continue
+        ranges = [script_times[cursor + offset] for offset in range(count)]
+        actual_ranges = [item for item in ranges if item is not None]
+        cursor += count
+        if not actual_ranges:
+            continue
+        start = max(0.0, min(item[0] for item in actual_ranges))
+        end = min(source_duration, max(item[1] for item in actual_ranges))
+        if end <= start:
+            end = min(source_duration, start + fallback_duration)
+        if start < previous_end:
+            start = previous_end
+            end = max(end, start + fallback_duration)
+        end = min(max(start, end), source_duration)
+        if end <= start:
+            continue
+        captions.append(
+            {
+                "start": round(start, 4),
+                "end": round(end, 4),
+                "text": normalize_subtitle_text(phrase),
+                "time_mode": "input",
+                "timing_source": "whisper_word_timestamps",
+            }
+        )
+        previous_end = end
+
     if not captions:
-        return []
-    if not script_lines:
-        return [normalize_subtitle_text(str(item.get("text", ""))) for item in captions]
-
-    def join_group(caption: dict[str, Any], phrases: list[str]) -> str:
-        existing = normalize_subtitle_text(str(caption.get("text", "")))
-        separator = " " if len(phrases) > 1 and re.search(r"\s", existing) else ""
-        return normalize_subtitle_text(separator.join(phrases))
-
-    caption_count = len(captions)
-    line_count = len(script_lines)
-    if line_count < caption_count:
-        # There are fewer script lines than time ranges. Preserve the supplied
-        # script as the authority and split it proportionally across ranges.
-        reference = "".join(script_lines)
-        weights = [max(1, len(_match_text(str(item.get("text", ""))))) for item in captions]
-        total_weight = sum(weights)
-        cursor = 0
-        chunks: list[str] = []
-        for index, weight in enumerate(weights):
-            if index == caption_count - 1:
-                end = len(reference)
-            else:
-                end = min(
-                    len(reference),
-                    max(cursor + 1, round(len(reference) * (sum(weights[: index + 1]) / total_weight))),
-                )
-            chunks.append(reference[cursor:end])
-            cursor = end
-        return [normalize_subtitle_text(chunk) for chunk in chunks]
-
-    max_group = min(6, max(2, math.ceil(line_count / caption_count) + 3))
-    scores = [[float("-inf")] * (line_count + 1) for _ in range(caption_count + 1)]
-    parents: dict[tuple[int, int], tuple[int, int]] = {}
-    scores[0][0] = 0.0
-    for caption_index in range(caption_count):
-        caption_text = _match_text(str(captions[caption_index].get("text", "")))
-        for start in range(line_count + 1):
-            if scores[caption_index][start] == float("-inf"):
-                continue
-            stop_limit = min(line_count, start + max_group)
-            for stop in range(start + 1, stop_limit + 1):
-                if line_count - stop < caption_count - caption_index - 1:
-                    continue
-                candidate = "".join(script_lines[start:stop])
-                candidate_text = _match_text(candidate)
-                similarity = difflib.SequenceMatcher(None, caption_text, candidate_text).ratio()
-                length_delta = abs(len(candidate_text) - len(caption_text)) / max(
-                    1, max(len(candidate_text), len(caption_text))
-                )
-                score = scores[caption_index][start] + similarity - 0.08 * length_delta
-                if score > scores[caption_index + 1][stop]:
-                    scores[caption_index + 1][stop] = score
-                    parents[(caption_index + 1, stop)] = (caption_index, start)
-
-    if (caption_count, line_count) not in parents:
-        reference = "".join(script_lines)
-        chunks = []
-        cursor = 0
-        for index in range(caption_count):
-            end = len(reference) if index == caption_count - 1 else max(cursor + 1, round(len(reference) * (index + 1) / caption_count))
-            chunks.append(reference[cursor:end])
-            cursor = end
-        return [normalize_subtitle_text(chunk) for chunk in chunks]
-
-    groups: list[str] = [""] * caption_count
-    cursor = (caption_count, line_count)
-    for caption_index in range(caption_count, 0, -1):
-        previous = parents[cursor]
-        _previous_caption, start = previous
-        _current_caption, stop = cursor
-        groups[caption_index - 1] = join_group(captions[caption_index - 1], script_lines[start:stop])
-        cursor = previous
-    return groups
+        raise PipelineError("Whisper word timestamps could not be mapped to the supplied script")
+    report = {
+        "timing_source": "whisper_word_timestamps",
+        "whisper_word_count": len(words),
+        "whisper_unit_count": len(whisper_units),
+        "script_unit_count": len(script_units),
+        "exactly_matched_script_unit_count": exact_match_units,
+        "alignment_ratio": round(exact_match_units / max(1, len(script_units)), 4),
+        "caption_count": len(captions),
+        "caption_time_mode": "input",
+    }
+    return captions, report
 
 
 def repair_timeline_captions(
     config: dict[str, Any],
     script_text: str,
+    *,
+    input_path: Path,
+    whisper_model: str = "tiny",
+    whisper_language: str = "zh",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     captions = config.get("captions", [])
-    if not isinstance(captions, list) or not captions:
-        raise PipelineError("Cannot repair subtitles without timeline captions and their time ranges")
-    script_lines = split_spoken_script_phrases(script_text)
-    if not script_lines:
-        raise PipelineError("The supplied spoken script is empty after punctuation normalization")
-    repaired_texts = _partition_script_lines(captions, script_lines)
+    if not isinstance(captions, list):
+        raise PipelineError("Timeline captions must be a list")
+    source = input_path.expanduser().resolve()
+    if not source.exists():
+        raise PipelineError(f"Input not found for Whisper subtitle timing: {source}")
+    source_duration = float(media_summary(source)["duration"])
+    words, _warning = whisper_word_timestamps(
+        source,
+        whisper_model,
+        whisper_language,
+        required=True,
+    )
+    generated_captions, alignment_report = align_script_to_whisper_words(
+        script_text,
+        words,
+        source_duration,
+    )
     repaired_config = dict(config)
-    repaired_config["captions"] = []
-    changes: list[dict[str, Any]] = []
-    for index, (caption, repaired_text) in enumerate(zip(captions, repaired_texts)):
-        item = dict(caption)
-        before = str(item.get("text", ""))
-        item["text"] = repaired_text
-        repaired_config["captions"].append(item)
-        if before != repaired_text:
-            changes.append({"index": index, "before": before, "after": repaired_text})
+    repaired_config["captions"] = generated_captions
     report = {
         "source": "caller_spoken_script",
-        "whisper_model": "tiny_for_timing_only",
+        "input": str(source),
+        "whisper_model": whisper_model,
+        "whisper_language": whisper_language,
+        "whisper_word_timestamps": True,
+        "word_timestamps": words,
+        "subtitle_timing_policy": "fill_caller_script_into_actual_whisper_word_timestamps",
         "subtitle_punctuation_policy": "remove_punctuation_keep_phrase_spaces",
-        "script_phrase_count": len(script_lines),
-        "caption_count": len(captions),
-        "changed_count": len(changes),
-        "changes": changes,
-        "normalized_script": "\n".join(script_lines),
+        "original_caption_count": len(captions),
+        "normalized_script": "\n".join(split_spoken_script_phrases(script_text)),
+        **alignment_report,
     }
     return repaired_config, report
 
 
 def prepare_repaired_timeline(args: argparse.Namespace) -> dict[str, Any] | None:
-    """Use caller narration as authoritative subtitle text without changing the source timeline."""
+    """Use caller narration as text, but take all caption timing from Whisper on the render input."""
     if not getattr(args, "script_file", None) and not getattr(args, "text", None):
         return None
     script_text = read_script_text(args.script_file, args.text)
     if not script_text:
         return None
     source_timeline = load_timeline_config(args.timeline_json)
-    repaired_config, report = repair_timeline_captions(source_timeline, script_text)
+    repaired_config, report = repair_timeline_captions(
+        source_timeline,
+        script_text,
+        input_path=args.input,
+        whisper_model=getattr(args, "whisper_model", "tiny"),
+        whisper_language=getattr(args, "whisper_language", "zh"),
+    )
     output_path = args.output.expanduser().resolve()
     repaired_path = getattr(args, "repaired_timeline_json", None)
     if repaired_path is None:
@@ -1050,7 +1293,13 @@ def cmd_repair_captions(args: argparse.Namespace) -> int:
     if not script_text:
         raise PipelineError("repair-captions requires --script-file or --text")
     config = load_timeline_config(args.timeline_json)
-    repaired_config, report = repair_timeline_captions(config, script_text)
+    repaired_config, report = repair_timeline_captions(
+        config,
+        script_text,
+        input_path=args.input,
+        whisper_model=args.whisper_model,
+        whisper_language=args.whisper_language,
+    )
     report["source_timeline"] = str(args.timeline_json.expanduser().resolve())
     report["repaired_timeline"] = str(args.output_timeline_json.expanduser().resolve())
     write_json(repaired_config, args.output_timeline_json)
@@ -1154,6 +1403,12 @@ def cmd_validate_rules(args: argparse.Namespace) -> int:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
+    # Resolve the manifest before prepare_repaired_timeline changes the timeline path
+    # to an output-directory copy.
+    args.asset_manifest = resolve_asset_manifest_path(
+        args.timeline_json,
+        getattr(args, "asset_manifest", None),
+    )
     subtitle_repair = prepare_repaired_timeline(args)
     if subtitle_repair:
         print(json.dumps({"subtitle_repair": subtitle_repair}, ensure_ascii=False, indent=2))
@@ -1330,7 +1585,7 @@ def add_common_rule_arguments(parser: argparse.ArgumentParser) -> None:
         "--script-file",
         type=Path,
         action="append",
-        help="Caller-supplied spoken script; render uses it as authoritative subtitle text and removes punctuation",
+        help="Caller-supplied subtitle text; render fills it into mandatory Whisper word timestamps and removes punctuation",
     )
     parser.add_argument("--text", action="append")
     parser.add_argument("--video", type=Path)
@@ -1364,6 +1619,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = sub.add_parser("preflight", help="Check FFmpeg, timeline, BGM, and required assets")
     preflight.add_argument("--asset-root", type=Path, required=True)
+    preflight.add_argument(
+        "--asset-manifest",
+        type=Path,
+        help="Synced soda_assets_manifest.json; defaults to the timeline directory",
+    )
     preflight.add_argument("--bgm", type=Path, required=True)
     preflight.add_argument("--input", type=Path)
     preflight.add_argument("--timeline-json", type=Path, required=True)
@@ -1406,11 +1666,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     repair = sub.add_parser(
         "repair-captions",
-        help="Use caller-supplied spoken script to repair timeline captions and remove punctuation",
+        help="Use Whisper word timestamps as caption timing, then fill caller-supplied spoken text",
     )
     repair.add_argument("--timeline-json", type=Path, required=True)
+    repair.add_argument("--input", type=Path, required=True)
     repair.add_argument("--script-file", type=Path, action="append")
     repair.add_argument("--text", action="append")
+    repair.add_argument("--whisper-model", default="tiny")
+    repair.add_argument("--whisper-language", default="zh")
     repair.add_argument("--output-timeline-json", type=Path, required=True)
     repair.add_argument("--output-json", type=Path)
     repair.set_defaults(func=cmd_repair_captions)
@@ -1423,6 +1686,11 @@ def build_parser() -> argparse.ArgumentParser:
     render = sub.add_parser("render", help="Validate and call the bundled standalone FFmpeg renderer")
     add_common_rule_arguments(render)
     render.add_argument("--asset-root", type=Path, required=True)
+    render.add_argument(
+        "--asset-manifest",
+        type=Path,
+        help="Synced soda_assets_manifest.json; defaults to the timeline directory",
+    )
     render.add_argument("--timeline-json", type=Path, required=True)
     render.add_argument("--logo-variant", choices=("white", "black"), default="white")
     render.add_argument("--input", type=Path, required=True)
@@ -1452,6 +1720,16 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--quick-qa", action="store_true")
     render.add_argument("--motion-effects", choices=("auto", "off", "required"))
     render.add_argument("--motion-seed")
+    render.add_argument(
+        "--whisper-model",
+        default="tiny",
+        help="Whisper model used for mandatory script timing; defaults to tiny",
+    )
+    render.add_argument(
+        "--whisper-language",
+        default="zh",
+        help="Whisper language used for mandatory script timing; defaults to zh",
+    )
     render.add_argument("--repaired-timeline-json", type=Path)
     render.add_argument("--subtitle-repair-report", type=Path)
     render.add_argument("--dry-run", action="store_true")

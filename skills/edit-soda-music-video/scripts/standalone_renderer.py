@@ -431,8 +431,8 @@ def resolve_logo_mode(config: dict[str, Any], logo_info: dict[str, Any]) -> str:
     return "placed"
 
 
-def map_time(value: float, config: dict[str, Any]) -> float:
-    mode = config.get("time_mode", "original")
+def map_time(value: float, config: dict[str, Any], mode_override: str | None = None) -> float:
+    mode = mode_override or config.get("time_mode", "original")
     speed = float(config.get("speed", 1.1))
     if mode == "output":
         return max(0.0, value)
@@ -456,14 +456,23 @@ def map_time(value: float, config: dict[str, Any]) -> float:
 def mapped_captions(config: dict[str, Any], main_duration: float) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for caption in config["captions"]:
-        start = min(map_time(float(caption["start"]), config), main_duration)
-        end = min(map_time(float(caption["end"]), config), main_duration)
+        caption_time_mode = str(caption.get("time_mode") or config.get("time_mode", "original"))
+        start = min(map_time(float(caption["start"]), config, caption_time_mode), main_duration)
+        end = min(map_time(float(caption["end"]), config, caption_time_mode), main_duration)
         if end - start < 0.18:
             end = min(main_duration, start + 0.18)
         if end > start:
             text = normalize_subtitle_text(str(caption["text"]))
             if text:
-                result.append({"start": start, "end": end, "text": text})
+                result.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "text": text,
+                        "time_mode": caption_time_mode,
+                        "timing_source": caption.get("timing_source"),
+                    }
+                )
     return result
 
 
@@ -992,7 +1001,7 @@ def build_report(
         "pre_roll_duration": 0.0,
         "opening_policy": "direct-to-digital-human",
         "caption_layer": "above-all-materials",
-        "caption_text_policy": "punctuation-removed-at-render; caller-script-repair-is-authoritative-when-provided",
+        "caption_text_policy": "caller-script text filled into actual Whisper word timestamps; punctuation removed at render",
         "logo_layer": "above-materials-captions-and-cta",
         "warning_layer": "topmost-when-enabled",
         "layer_order": ["base", "materials", "captions_and_cta", "logo", "warning"],

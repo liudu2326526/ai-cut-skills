@@ -6,16 +6,19 @@
 
 `sync-assets` 只负责确定性的文件扫描、类型判断和 FFprobe 元数据。它不会理解图片，也不会根据文件名替素材做决定。
 
+生成视频前必须完成全量视觉素材理解门禁：Manifest 中所有 `kind=image` 或 `kind=video` 的记录都必须有非空 `description`，Manifest 的 `asset_root` 必须与当前任务一致，时间轴引用的 logo、尾帧和普通素材都必须出现在 Manifest 中。`preflight`/`render` 会检查这些条件；任一条件不满足时先停止渲染，完成下面的 Read 流程后再继续。
+
 ## 入库时的操作顺序
 
 1. 运行 `sync-assets`，读取工作区 Manifest；
-2. 查看 Manifest 的 `changes.added`、`changes.modified`，以及缺少 `description` 的素材；
+2. 查看 Manifest 的 `changes.added`、`changes.modified`，以及缺少 `description` 的素材；若要进入正式生成，不能只理解变化项，必须把所有图片/视频都核对为已有准确 description；
 3. 对每张待理解的图片使用 Read 工具打开原图，逐张确认真实画面；
 4. 对每段待理解的视频先用 FFprobe 获取时长，再用 FFmpeg 导出首帧、四分之一、中点、四分之三和尾帧等缩略图；使用 Read 工具逐张查看这些缩略帧，不能只看文件名或第一帧；
 5. 对透明 PNG 必要时在浅色和深色背景上各查看一次，区分透明留白与实际内容；
 6. 为每个素材写一段准确、具体、可检索的中文 `description`；
 7. 只把 `description` 写入对应 Manifest 素材记录，不增加 `keywords`、`recommended_usage`、向量或模型调用字段；
-8. 保存 Manifest 前复核描述是否真的来自画面，不能把文件名、目录名或粗分类当成画面事实。
+8. 保存 Manifest 前复核描述是否真的来自画面，不能把文件名、目录名或粗分类当成画面事实；
+9. 再运行 `preflight --asset-manifest ...`，确认门禁报告 `asset_understanding.ok=true` 后才允许生成视频。
 
 ## description 写法
 
@@ -49,7 +52,7 @@
 
 ## 根据口播匹配素材
 
-执行模型读取当前口播文案、字幕和 Manifest 中每个素材的 `description`，按语义理解进行匹配，而不是按文件名直接命中：
+执行模型读取当前口播文案、字幕和 Manifest 中每个素材的 `description`，先确认全量 description 门禁已通过，再按语义理解进行匹配，而不是按文件名直接命中：
 
 1. 先按 `kind`、`category`、布局、时长、合规状态和黑边检查做硬过滤；
 2. 对剩余素材逐条阅读 description，并与当前口播句子的主体、动作、功能和场景进行语义比较；

@@ -9,19 +9,19 @@
 - 是否金币、是否歌单、歌曲禁投审查结果；
 - 金额档位、允许的利益点；
 - 口播字幕文本和每个物料的入点/出点。
-- 若调用方提供口播文件，确认其为字幕文本的权威来源；字幕只保留无标点版本。
+- 若调用方提供口播文件，确认其为字幕文本的权威来源；字幕时序仍必须来自对当前输入执行的 Whisper `--word_timestamps True`，字幕只保留无标点版本。
 
 如果渠道没有确认，不要直接渲染。时长只记录实际结果，不作为渲染门槛。
 
 ## 2. 同步并预检素材
 
-先运行 `scripts/soda_pipeline.py sync-assets`，把素材根目录的文件清单和可读取的媒体信息写入工作区 Manifest。每次运行都会比较指纹；未变化时复用现有清单，发生新增、删除或修改时重新读取并更新。需要内容级素材理解时，执行模型直接用 Read 工具查看新增、修改或缺少 description 的图片和视频代表帧，并把准确中文 description 写入 Manifest；不要调用素材理解脚本或外部模型端点。规划物料时优先读取 Manifest，不要凭记忆假设文件存在。
+先运行 `scripts/soda_pipeline.py sync-assets`，把素材根目录的文件清单和可读取的媒体信息写入工作区 Manifest。每次运行都会比较指纹；未变化时复用现有清单，发生新增、删除或修改时重新读取并更新。执行模型随后必须用 Read 工具查看所有新增、修改或缺少 description 的图片和视频代表帧，并把准确中文 description 写入 Manifest；不要调用素材理解脚本或外部模型端点。生成视频前再次确认全部图片/视频都有 description，Manifest 的 `asset_root` 与当前任务一致，时间轴没有引用未入库视觉素材。任何一项不满足都先完成素材理解，禁止进入 render。
 
 使用 `scripts/soda_pipeline.py preflight` 检查 FFmpeg、FFprobe、BGM、时间轴 JSON、字体、logo、尾帧和通用物料。原始视频和原始物料保持不变，在副本路径输出中间文件。
 
 ## 3. 去气口
 
-先用 `detect-pauses` 运行 `-35dB/-30dB/-25dB` 多阈值交叉检测；固定使用本地 Whisper `tiny` 增加逐词时间戳。Whisper 只辅助定位停顿，不负责最终字幕文本。严格阈值默认检查 0.35 秒以上静音，动态阈值补充 0.18 秒以上停顿。只把多阈值相互印证，或音量检测与 Whisper 相互印证的区间列为稳定候选。
+先用 `detect-pauses` 运行 `-35dB/-30dB/-25dB` 多阈值交叉检测；固定使用本地 Whisper `tiny` 增加逐词时间戳。Whisper 文本不负责最终字幕文字，但它的实际词级时间戳必须负责字幕时序。严格阈值默认检查 0.35 秒以上静音，动态阈值补充 0.18 秒以上停顿。只把多阈值相互印证，或音量检测与 Whisper 相互印证的区间列为稳定候选。
 
 不要自动接受全部候选。结合语义、波形、呼吸、尾音、爆破音、口型和动作人工确认，每处保留 `0.12–0.20s`，默认 `0.16s`。将批准范围写入 JSON，再用 `trim-pauses` 输出中间视频。完整规则见 [pause-removal.md](pause-removal.md)。
 
@@ -29,9 +29,11 @@
 
 ## 4. 计划与渲染
 
-用语句驱动物料，不用素材文件名猜时间。需要自动匹配时，执行模型直接阅读口播文案和 Manifest 中的 description，按语义选择真正对应的素材，并把已有的真实路径写入 `materials[].path`；不得创造不存在的路径，也不得因为文件名相似就选择无关画面。按语义从以下种类中选择：产品功能操作录屏、使用场景图、合规利益点图、功能说明图、CTA 视觉元素、品牌 logo 和官方尾帧。完整种类和输入要求见 [asset-requirements.md](asset-requirements.md)。如果传入口播文件，先运行 `repair-captions` 或直接让 `render --script-file` 自动修正字幕；修正只替换文本，不改变原有时间范围，最终字幕统一去标点。
+用语句驱动物料，不用素材文件名猜时间。需要自动匹配时，执行模型直接阅读口播文案和 Manifest 中的 description，按语义选择真正对应的素材，并把已有的真实路径写入 `materials[].path`；不得创造不存在的路径，也不得因为文件名相似就选择无关画面。按语义从以下种类中选择：产品功能操作录屏、使用场景图、合规利益点图、功能说明图、CTA 视觉元素、品牌 logo 和官方尾帧。完整种类和输入要求见 [asset-requirements.md](asset-requirements.md)。如果传入口播文件，先对去气口后的当前输入运行 `repair-captions --input ...`，或让 `render --script-file` 自动执行 Whisper `--word_timestamps True`；调用方台词填入 Whisper 的实际词级时间槽，不得沿用旧字幕范围，最终字幕统一去标点。
 
 Skill 不提供固定物料映射或样片时间码。每次都必须根据当前口播、去气口结果、最终倍速和字幕重新计算入点与出点。
+
+先运行 `preflight --asset-manifest ...`。预检会阻止以下情况：Manifest 缺失、Manifest 与当前 `asset_root` 不一致、任意图片/视频 description 为空、时间轴视觉素材未被 Manifest 跟踪。门禁失败时回到素材理解步骤，不能用参数绕过。
 
 渲染使用 Skill 内置 `scripts/standalone_renderer.py`。它通过 Python 标准库和 FFmpeg/FFprobe 独立完成 ASS 字幕、媒体信息读取、调用方素材叠加、封面提取、BGM 混音和 JSON 报告，默认输出 1080×1920、30fps、H.264/AAC。BGM 先归一化到默认 `-28 LUFS`，再使用默认 `1.0` 的后置微调倍率；禁止把旧的 `0.22` 原始衰减值继续用于新流程。
 
