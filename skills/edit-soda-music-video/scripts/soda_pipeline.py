@@ -9,6 +9,7 @@ bundled FFmpeg renderer, and generate a technical QA report.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import math
 import re
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import statistics
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -31,6 +33,8 @@ from motion_effects_bridge import (
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RENDERER = SKILL_ROOT / "scripts" / "standalone_renderer.py"
 DEFAULT_ASSET_MANIFEST_SCRIPT = SKILL_ROOT / "scripts" / "asset_manifest.py"
+DEFAULT_ASSET_UNDERSTANDING_SCRIPT = SKILL_ROOT / "scripts" / "asset_content_understanding.py"
+DEFAULT_ASSET_MATCHER_SCRIPT = SKILL_ROOT / "scripts" / "asset_matcher.py"
 
 CHANNELS = ("old-down", "new-high-mid", "free-listen", "coin-non-down", "general")
 GLOBAL_BANNED_TERMS = ("红包", "花不完", "必听", "必点", "躺平", "emo")
@@ -497,6 +501,48 @@ def cmd_sync_assets(args: argparse.Namespace) -> int:
     return result.returncode
 
 
+def cmd_understand_assets(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(DEFAULT_ASSET_UNDERSTANDING_SCRIPT.resolve()),
+        "--manifest",
+        str(args.manifest.expanduser().resolve()),
+    ]
+    for name in ("asset_root", "output_manifest", "base_url", "api_key", "model", "prompt_version", "max_frames", "limit"):
+        value = getattr(args, name, None)
+        if value is None:
+            continue
+        flag = "--" + name.replace("_", "-")
+        command.extend((flag, str(value)))
+    if args.force:
+        command.append("--force")
+    result = run_command(command, capture=False, check=False)
+    return result.returncode
+
+
+def cmd_match_materials(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(DEFAULT_ASSET_MATCHER_SCRIPT.resolve()),
+        "--manifest",
+        str(args.manifest.expanduser().resolve()),
+        "--query",
+        args.query,
+        "--output-json",
+        str(args.output_json.expanduser().resolve()),
+    ]
+    for name in ("kind", "category", "max_candidates", "base_url", "api_key", "model"):
+        value = getattr(args, name, None)
+        if value is None:
+            continue
+        flag = "--" + name.replace("_", "-")
+        command.extend((flag, str(value)))
+    if args.no_llm:
+        command.append("--no-llm")
+    result = run_command(command, capture=False, check=False)
+    return result.returncode
+
+
 def parse_noise_levels(raw: str) -> list[str]:
     levels = [item.strip() for item in raw.split(",") if item.strip()]
     if not levels:
@@ -863,6 +909,199 @@ def read_script_text(paths: list[Path] | None, inline_text: list[str] | None) ->
     return "\n".join(parts).strip()
 
 
+def normalize_subtitle_text(text: str) -> str:
+    """Remove subtitle punctuation while keeping phrase-separating spaces."""
+    normalized_lines: list[str] = []
+    for raw_line in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        chars: list[str] = []
+        for char in raw_line:
+            if unicodedata.category(char).startswith("P"):
+                chars.append(" ")
+            else:
+                chars.append(char)
+        line = re.sub(r"[ \t]+", " ", "".join(chars)).strip()
+        if line:
+            normalized_lines.append(line)
+    return "\n".join(normalized_lines)
+
+
+def _match_text(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_subtitle_text(text)).lower()
+
+
+def split_spoken_script_phrases(text: str) -> list[str]:
+    """Split caller narration on line breaks and punctuation before cleanup."""
+    phrases: list[str] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        value = normalize_subtitle_text("".join(buffer))
+        if value:
+            phrases.append(value)
+        buffer.clear()
+
+    for char in str(text):
+        if char in "\r\n" or unicodedata.category(char).startswith("P"):
+            flush()
+        else:
+            buffer.append(char)
+    flush()
+    return phrases
+
+
+def _partition_script_lines(
+    captions: list[dict[str, Any]],
+    script_lines: list[str],
+) -> list[str]:
+    """Map caller script lines onto existing caption time ranges in order."""
+    if not captions:
+        return []
+    if not script_lines:
+        return [normalize_subtitle_text(str(item.get("text", ""))) for item in captions]
+
+    def join_group(caption: dict[str, Any], phrases: list[str]) -> str:
+        existing = normalize_subtitle_text(str(caption.get("text", "")))
+        separator = " " if len(phrases) > 1 and re.search(r"\s", existing) else ""
+        return normalize_subtitle_text(separator.join(phrases))
+
+    caption_count = len(captions)
+    line_count = len(script_lines)
+    if line_count < caption_count:
+        # There are fewer script lines than time ranges. Preserve the supplied
+        # script as the authority and split it proportionally across ranges.
+        reference = "".join(script_lines)
+        weights = [max(1, len(_match_text(str(item.get("text", ""))))) for item in captions]
+        total_weight = sum(weights)
+        cursor = 0
+        chunks: list[str] = []
+        for index, weight in enumerate(weights):
+            if index == caption_count - 1:
+                end = len(reference)
+            else:
+                end = min(
+                    len(reference),
+                    max(cursor + 1, round(len(reference) * (sum(weights[: index + 1]) / total_weight))),
+                )
+            chunks.append(reference[cursor:end])
+            cursor = end
+        return [normalize_subtitle_text(chunk) for chunk in chunks]
+
+    max_group = min(6, max(2, math.ceil(line_count / caption_count) + 3))
+    scores = [[float("-inf")] * (line_count + 1) for _ in range(caption_count + 1)]
+    parents: dict[tuple[int, int], tuple[int, int]] = {}
+    scores[0][0] = 0.0
+    for caption_index in range(caption_count):
+        caption_text = _match_text(str(captions[caption_index].get("text", "")))
+        for start in range(line_count + 1):
+            if scores[caption_index][start] == float("-inf"):
+                continue
+            stop_limit = min(line_count, start + max_group)
+            for stop in range(start + 1, stop_limit + 1):
+                if line_count - stop < caption_count - caption_index - 1:
+                    continue
+                candidate = "".join(script_lines[start:stop])
+                candidate_text = _match_text(candidate)
+                similarity = difflib.SequenceMatcher(None, caption_text, candidate_text).ratio()
+                length_delta = abs(len(candidate_text) - len(caption_text)) / max(
+                    1, max(len(candidate_text), len(caption_text))
+                )
+                score = scores[caption_index][start] + similarity - 0.08 * length_delta
+                if score > scores[caption_index + 1][stop]:
+                    scores[caption_index + 1][stop] = score
+                    parents[(caption_index + 1, stop)] = (caption_index, start)
+
+    if (caption_count, line_count) not in parents:
+        reference = "".join(script_lines)
+        chunks = []
+        cursor = 0
+        for index in range(caption_count):
+            end = len(reference) if index == caption_count - 1 else max(cursor + 1, round(len(reference) * (index + 1) / caption_count))
+            chunks.append(reference[cursor:end])
+            cursor = end
+        return [normalize_subtitle_text(chunk) for chunk in chunks]
+
+    groups: list[str] = [""] * caption_count
+    cursor = (caption_count, line_count)
+    for caption_index in range(caption_count, 0, -1):
+        previous = parents[cursor]
+        _previous_caption, start = previous
+        _current_caption, stop = cursor
+        groups[caption_index - 1] = join_group(captions[caption_index - 1], script_lines[start:stop])
+        cursor = previous
+    return groups
+
+
+def repair_timeline_captions(
+    config: dict[str, Any],
+    script_text: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    captions = config.get("captions", [])
+    if not isinstance(captions, list) or not captions:
+        raise PipelineError("Cannot repair subtitles without timeline captions and their time ranges")
+    script_lines = split_spoken_script_phrases(script_text)
+    if not script_lines:
+        raise PipelineError("The supplied spoken script is empty after punctuation normalization")
+    repaired_texts = _partition_script_lines(captions, script_lines)
+    repaired_config = dict(config)
+    repaired_config["captions"] = []
+    changes: list[dict[str, Any]] = []
+    for index, (caption, repaired_text) in enumerate(zip(captions, repaired_texts)):
+        item = dict(caption)
+        before = str(item.get("text", ""))
+        item["text"] = repaired_text
+        repaired_config["captions"].append(item)
+        if before != repaired_text:
+            changes.append({"index": index, "before": before, "after": repaired_text})
+    report = {
+        "source": "caller_spoken_script",
+        "whisper_model": "tiny_for_timing_only",
+        "subtitle_punctuation_policy": "remove_punctuation_keep_phrase_spaces",
+        "script_phrase_count": len(script_lines),
+        "caption_count": len(captions),
+        "changed_count": len(changes),
+        "changes": changes,
+        "normalized_script": "\n".join(script_lines),
+    }
+    return repaired_config, report
+
+
+def prepare_repaired_timeline(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Use caller narration as authoritative subtitle text without changing the source timeline."""
+    if not getattr(args, "script_file", None) and not getattr(args, "text", None):
+        return None
+    script_text = read_script_text(args.script_file, args.text)
+    if not script_text:
+        return None
+    source_timeline = load_timeline_config(args.timeline_json)
+    repaired_config, report = repair_timeline_captions(source_timeline, script_text)
+    output_path = args.output.expanduser().resolve()
+    repaired_path = getattr(args, "repaired_timeline_json", None)
+    if repaired_path is None:
+        repaired_path = output_path.with_name(output_path.stem + "_repaired_timeline.json")
+    repair_report_path = getattr(args, "subtitle_repair_report", None)
+    if repair_report_path is None:
+        repair_report_path = output_path.with_name(output_path.stem + "_subtitle_repair.json")
+    write_json(repaired_config, repaired_path)
+    report["source_timeline"] = str(args.timeline_json.expanduser().resolve())
+    report["repaired_timeline"] = str(Path(repaired_path).expanduser().resolve())
+    write_json(report, repair_report_path)
+    args.timeline_json = Path(repaired_path)
+    return report
+
+
+def cmd_repair_captions(args: argparse.Namespace) -> int:
+    script_text = read_script_text(args.script_file, args.text)
+    if not script_text:
+        raise PipelineError("repair-captions requires --script-file or --text")
+    config = load_timeline_config(args.timeline_json)
+    repaired_config, report = repair_timeline_captions(config, script_text)
+    report["source_timeline"] = str(args.timeline_json.expanduser().resolve())
+    report["repaired_timeline"] = str(args.output_timeline_json.expanduser().resolve())
+    write_json(repaired_config, args.output_timeline_json)
+    write_json(report, args.output_json)
+    return 0
+
+
 def validate_rules(args: argparse.Namespace) -> dict[str, Any]:
     text = read_script_text(args.script_file, args.text)
     duration: float | None = args.duration
@@ -959,6 +1198,9 @@ def cmd_validate_rules(args: argparse.Namespace) -> int:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
+    subtitle_repair = prepare_repaired_timeline(args)
+    if subtitle_repair:
+        print(json.dumps({"subtitle_repair": subtitle_repair}, ensure_ascii=False, indent=2))
     args.speed = validate_speed(args.speed)
     args.bgm_target_lufs, args.bgm_volume = validate_bgm_settings(
         args.bgm_target_lufs, args.bgm_volume
@@ -1128,7 +1370,12 @@ def cmd_qa(args: argparse.Namespace) -> int:
 
 def add_common_rule_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--channel", choices=CHANNELS, required=True)
-    parser.add_argument("--script-file", type=Path, action="append")
+    parser.add_argument(
+        "--script-file",
+        type=Path,
+        action="append",
+        help="Caller-supplied spoken script; render uses it as authoritative subtitle text and removes punctuation",
+    )
     parser.add_argument("--text", action="append")
     parser.add_argument("--video", type=Path)
     parser.add_argument("--duration", type=float)
@@ -1158,6 +1405,38 @@ def build_parser() -> argparse.ArgumentParser:
     sync_assets.add_argument("--checksum", action="store_true")
     sync_assets.add_argument("--force", action="store_true")
     sync_assets.set_defaults(func=cmd_sync_assets)
+
+    understand = sub.add_parser(
+        "understand-assets",
+        help="Use a configured multimodal model to add one description per image/video asset to the Manifest",
+    )
+    understand.add_argument("--manifest", type=Path, required=True)
+    understand.add_argument("--asset-root", type=Path)
+    understand.add_argument("--output-manifest", type=Path)
+    understand.add_argument("--base-url")
+    understand.add_argument("--api-key")
+    understand.add_argument("--model")
+    understand.add_argument("--prompt-version", default="asset-understanding-v1")
+    understand.add_argument("--max-frames", type=int, default=4)
+    understand.add_argument("--limit", type=int)
+    understand.add_argument("--force", action="store_true")
+    understand.set_defaults(func=cmd_understand_assets)
+
+    match = sub.add_parser(
+        "match-materials",
+        help="Match a spoken query against cached asset descriptions without a vector database",
+    )
+    match.add_argument("--manifest", type=Path, required=True)
+    match.add_argument("--query", required=True)
+    match.add_argument("--output-json", type=Path, required=True)
+    match.add_argument("--kind")
+    match.add_argument("--category")
+    match.add_argument("--max-candidates", type=int, default=20)
+    match.add_argument("--base-url")
+    match.add_argument("--api-key")
+    match.add_argument("--model")
+    match.add_argument("--no-llm", action="store_true")
+    match.set_defaults(func=cmd_match_materials)
 
     preflight = sub.add_parser("preflight", help="Check FFmpeg, timeline, BGM, and required assets")
     preflight.add_argument("--asset-root", type=Path, required=True)
@@ -1201,6 +1480,17 @@ def build_parser() -> argparse.ArgumentParser:
     trim.add_argument("--dry-run", action="store_true")
     trim.set_defaults(func=cmd_trim_pauses)
 
+    repair = sub.add_parser(
+        "repair-captions",
+        help="Use caller-supplied spoken script to repair timeline captions and remove punctuation",
+    )
+    repair.add_argument("--timeline-json", type=Path, required=True)
+    repair.add_argument("--script-file", type=Path, action="append")
+    repair.add_argument("--text", action="append")
+    repair.add_argument("--output-timeline-json", type=Path, required=True)
+    repair.add_argument("--output-json", type=Path)
+    repair.set_defaults(func=cmd_repair_captions)
+
     rules = sub.add_parser("validate-rules", help="Validate channel, wording, amount, and playlist rules")
     add_common_rule_arguments(rules)
     rules.add_argument("--output-json", type=Path)
@@ -1238,6 +1528,8 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--quick-qa", action="store_true")
     render.add_argument("--motion-effects", choices=("auto", "off", "required"))
     render.add_argument("--motion-seed")
+    render.add_argument("--repaired-timeline-json", type=Path)
+    render.add_argument("--subtitle-repair-report", type=Path)
     render.add_argument("--dry-run", action="store_true")
     render.set_defaults(func=cmd_render)
 

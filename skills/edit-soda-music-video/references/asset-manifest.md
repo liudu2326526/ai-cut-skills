@@ -14,6 +14,18 @@
 6. 指纹、素材根目录、扫描模式和 Manifest 结构均未变化时返回 `status=unchanged`，不改写文件。
 7. 发现新增、删除或修改时，只重新读取受影响文件的元数据并原子替换 Manifest；未变化文件的已读取元数据会复用。
 
+## 可选内容理解
+
+基础 Manifest 不调用大模型。需要理解图片/视频具体内容时，单独运行 `understand-assets`，将一段中文 `content_understanding.description` 写回对应素材记录：
+
+```bash
+python3 scripts/soda_pipeline.py understand-assets \
+  --manifest /absolute/path/workspace/soda_assets_manifest.json \
+  --model <multimodal-model>
+```
+
+内容理解只保存 `description` 以及模型、Prompt 版本、内容指纹和状态等缓存信息，不保存 `keywords`、`recommended_usage` 或向量。内容指纹、模型和 Prompt 版本一致时复用已有 description；使用 `--force` 才强制重做。
+
 ## 状态
 
 - `created`：首次创建 Manifest；
@@ -29,3 +41,4 @@
 - `--quick` 适合只检查文件增删改，不读取媒体元数据；正式剪辑前使用默认完整扫描。
 - FFprobe 不可用时仍会保存基础文件信息，并在对应记录的 `media.probe_error` 中说明原因。
 - Manifest 是当前工作区的运行时缓存，不得复制回 Skill 目录或提交为固定素材配置。
+- `content_understanding` 是可选的工作区缓存；没有 `status=ready` 和非空 `description` 的素材不参与语义匹配。

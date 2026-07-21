@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -460,7 +461,9 @@ def mapped_captions(config: dict[str, Any], main_duration: float) -> list[dict[s
         if end - start < 0.18:
             end = min(main_duration, start + 0.18)
         if end > start:
-            result.append({"start": start, "end": end, "text": str(caption["text"])})
+            text = normalize_subtitle_text(str(caption["text"]))
+            if text:
+                result.append({"start": start, "end": end, "text": text})
     return result
 
 
@@ -484,6 +487,22 @@ def ass_timestamp(seconds: float) -> str:
 
 def escape_ass_text(text: str) -> str:
     return text.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
+
+
+def normalize_subtitle_text(text: str) -> str:
+    """Remove subtitle punctuation while keeping phrase-separating spaces."""
+    normalized_lines: list[str] = []
+    for raw_line in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        chars: list[str] = []
+        for char in raw_line:
+            if unicodedata.category(char).startswith("P"):
+                chars.append(" ")
+            else:
+                chars.append(char)
+        line = re.sub(r"[ \t]+", " ", "".join(chars)).strip()
+        if line:
+            normalized_lines.append(line)
+    return "\n".join(normalized_lines)
 
 
 def rgb_to_ass(value: str, *, style: bool = False) -> str:
@@ -973,6 +992,7 @@ def build_report(
         "pre_roll_duration": 0.0,
         "opening_policy": "direct-to-digital-human",
         "caption_layer": "above-all-materials",
+        "caption_text_policy": "punctuation-removed-at-render; caller-script-repair-is-authoritative-when-provided",
         "logo_layer": "above-materials-captions-and-cta",
         "warning_layer": "topmost-when-enabled",
         "layer_order": ["base", "materials", "captions_and_cta", "logo", "warning"],
