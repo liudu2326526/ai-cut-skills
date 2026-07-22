@@ -1,4 +1,4 @@
 interface:
   display_name: "汽水音乐混剪成片"
   short_description: "汽水音乐利益点语义选材、字幕对齐无缝切换与品牌安全区混剪"
-  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪：先用 $manage-visual-asset-library 完成视觉素材 Manifest、Read 理解和普通语义候选；用户未指定渠道和 BGM 时不要追问，自主选择正式渠道与任务内最匹配的可用 BGM并记录依据；汽水层只在利益点选材并优先处理特殊规则，对去气口后的当前 input 执行 Whisper 词级识别，将字幕和素材统一写为 time_mode=input，让素材 start/end 直接复制完整利益点的字幕 input 边界；删除普通标点但保留数字内部小数点，禁止把 0.3 拆成两个 caption；过宽台词先按 Whisper 实际词时间拆成多个 caption，剩余字幕按至少 96px 边距和 0.92 余量显式均衡换行，最多三行，超限预检失败且不得缩小字号；所有素材默认保持源像素尺寸，只在有效内容碰撞品牌区域且平移无效时等比缩小；icon 未显式设置 y 时，底边默认紧跟最终显式换行字幕上边界上方 72px，静态与动效共用同一解析后坐标。"
+  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪：先用 $manage-visual-asset-library 完成视觉素材 Manifest、Read 理解和普通语义候选；用户未指定渠道和 BGM 时不要追问，自主选择正式渠道与任务内最匹配的可用 BGM并记录依据；汽水层只在利益点选材并优先处理特殊规则；先运行 caption-budget，根据实际字幕样式只计算一次本任务单行字数上限，再复制原口播并只插入语义换行，优先在动作与结果、条件、转折、因果或并列意群之间切分，禁止按字数平均拆句；对去气口后的当前 input 执行 Whisper 词级识别，一行映射一个 caption event，将字幕和素材统一写为 time_mode=input，让素材 start/end 直接复制完整利益点的字幕 input 边界；删除普通标点但保留数字内部小数点，禁止把 0.3 拆成两个 caption；所有素材默认保持源像素尺寸，只在有效内容碰撞品牌区域且平移无效时等比缩小；icon 未显式设置 y 时，底边默认紧跟最终显式换行字幕上边界上方 72px，静态与动效共用同一解析后坐标。"

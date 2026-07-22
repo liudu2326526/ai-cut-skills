@@ -19,7 +19,12 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
-from caption_layout import CaptionLayoutError, layout_caption_text
+from ass_fonts import AssFontError, validate_ass_font_config, validate_ass_font_family
+from caption_layout import (
+    CaptionLayoutError,
+    derive_caption_character_budget,
+    layout_caption_text,
+)
 from motion_effects_bridge import (
     MotionEffectsError,
     apply_motion_overrides,
@@ -248,6 +253,10 @@ def load_timeline(path: Path) -> dict[str, Any]:
         raise RenderError(
             "Timeline JSON contains unresolved placeholders: " + ", ".join(placeholders)
         )
+    try:
+        validate_ass_font_config(data.get("font", {}))
+    except AssFontError as exc:
+        raise RenderError(str(exc)) from exc
     speed = float(data.get("speed", 1.1))
     if not 0.5 <= speed <= 2.0:
         raise RenderError("speed must be between 0.5 and 2.0 for FFmpeg atempo")
@@ -967,6 +976,11 @@ def generate_ass(
     brand_color: str,
     caption_style: dict[str, Any],
 ) -> None:
+    try:
+        body_family = validate_ass_font_family(body_family, "font.body_family")
+        brand_family = validate_ass_font_family(brand_family, "font.brand_family")
+    except AssFontError as exc:
+        raise RenderError(str(exc)) from exc
     position_override = ""
     if caption_style["position_mode"] != "margins":
         position_override = (
@@ -1533,6 +1547,10 @@ def main() -> int:
     report["caption_style"] = caption_style
     report["caption_layout"] = {
         "ok": True,
+        "caption_character_budget": derive_caption_character_budget(
+            caption_style,
+            int(config.get("width", 1080)),
+        ),
         "captions": [
             {
                 "index": index,

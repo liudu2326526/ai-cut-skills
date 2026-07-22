@@ -106,6 +106,42 @@ def measure_caption_text(text: str, caption_style: dict[str, Any]) -> float:
     return sum(widths) + max(0, len(widths) - 1) * spacing
 
 
+def derive_caption_character_budget(
+    caption_style: dict[str, Any], canvas_width: int
+) -> dict[str, Any]:
+    """Calculate one task-level CJK character cap from the active caption style."""
+
+    policy = resolve_caption_wrap_policy(caption_style, canvas_width)
+    reference_cjk_width = measure_caption_text("字", caption_style)
+    spacing = float(caption_style.get("spacing", 0))
+    denominator = reference_cjk_width + spacing
+    if denominator <= 0:
+        raise CaptionLayoutError(
+            "caption font width plus spacing must be positive for character-budget calculation"
+        )
+    maximum = math.floor(
+        (float(policy["available_width"]) + spacing) / denominator
+    )
+    if maximum < 1:
+        raise CaptionLayoutError(
+            "caption style leaves room for fewer than one reference CJK character"
+        )
+    return {
+        "calculation": "derived_once_from_caption_style",
+        "canvas_width": int(canvas_width),
+        "available_width": round(float(policy["available_width"]), 3),
+        "reference_cjk_width": round(reference_cjk_width, 3),
+        "spacing": round(spacing, 3),
+        "max_characters_per_line": int(maximum),
+    }
+
+
+def count_caption_characters(text: str) -> int:
+    """Count visible characters for the model-facing semantic line budget."""
+
+    return sum(1 for char in str(text) if not char.isspace())
+
+
 def _balanced_wrap(
     tokens: list[str],
     caption_style: dict[str, Any],
@@ -172,27 +208,6 @@ def _balanced_wrap(
     raise CaptionLayoutError(
         f"caption requires more than {maximum_lines} lines within {available_width:.1f}px"
     )
-
-
-def split_caption_event_text(
-    text: str, caption_style: dict[str, Any], canvas_width: int
-) -> list[str]:
-    """Split caller text into one-line event chunks before assigning word times."""
-
-    policy = resolve_caption_wrap_policy(caption_style, canvas_width)
-    result: list[str] = []
-    for paragraph in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        tokens = caption_tokens(paragraph)
-        non_space_count = sum(1 for token in tokens if token.strip())
-        result.extend(
-            _balanced_wrap(
-                tokens,
-                caption_style,
-                float(policy["available_width"]),
-                max(1, non_space_count),
-            )
-        )
-    return result
 
 
 def layout_caption_text(

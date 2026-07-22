@@ -99,15 +99,55 @@ class CaptionLayoutTests(unittest.TestCase):
         self.assertIn(r"快点击视频下方链接\N", ass)
         self.assertIn(r"{\fnSoda Font", ass)
 
-    def test_whisper_alignment_splits_long_phrase_at_real_word_times(self) -> None:
-        text = "快点击视频下方链接下载汽水音乐体验吧"
+    def test_ass_generation_rejects_comma_separated_font_fallbacks(self) -> None:
+        config = {"font": {"caption_style": CAPTION_STYLE}}
+        style = standalone_renderer.resolve_caption_style(config, 1080, 1920)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "captions.ass"
+            with self.assertRaisesRegex(
+                standalone_renderer.RenderError,
+                "font.body_family.*fallback list",
+            ):
+                standalone_renderer.generate_ass(
+                    [{"start": 0.0, "end": 2.0, "text": "是不是好奇"}],
+                    output,
+                    width=1080,
+                    height=1920,
+                    body_family="FZLanTingHeiS-R-GB,方正兰亭黑简体",
+                    brand_family="Soda Font",
+                    body_color="#FFFFFF",
+                    brand_color="#3BFD42",
+                    caption_style=style,
+                )
+
+    def test_character_budget_is_derived_from_the_active_style(self) -> None:
+        regular = caption_layout.derive_caption_character_budget(
+            CAPTION_STYLE,
+            1080,
+        )
+        smaller_style = {**CAPTION_STYLE, "font_size": 50}
+        smaller = caption_layout.derive_caption_character_budget(
+            smaller_style,
+            1080,
+        )
+
+        self.assertEqual(regular["max_characters_per_line"], 11)
+        self.assertGreater(
+            smaller["max_characters_per_line"],
+            regular["max_characters_per_line"],
+        )
+        self.assertEqual(regular["calculation"], "derived_once_from_caption_style")
+
+    def test_whisper_alignment_preserves_model_semantic_lines(self) -> None:
+        spoken = "快点击视频下方链接下载汽水音乐体验吧"
+        semantic_script = "快点击视频下方链接\n下载汽水音乐体验吧"
         words = [
             {"start": index * 0.1, "end": (index + 1) * 0.1, "word": char}
-            for index, char in enumerate(text)
+            for index, char in enumerate(spoken)
         ]
 
         captions, report = soda_pipeline.align_script_to_whisper_words(
-            text,
+            semantic_script,
             words,
             3.0,
             caption_style=CAPTION_STYLE,
@@ -120,7 +160,40 @@ class CaptionLayoutTests(unittest.TestCase):
         )
         self.assertEqual((captions[0]["start"], captions[0]["end"]), (0.0, 0.9))
         self.assertEqual((captions[1]["start"], captions[1]["end"]), (0.9, 1.8))
-        self.assertEqual(report["visual_caption_split_count"], 1)
+        self.assertEqual(report["caption_segmentation_source"], "executor_model_semantic_lines")
+        self.assertEqual(report["semantic_segment_count"], 2)
+        self.assertEqual(report["automatic_width_split_count"], 0)
+
+    def test_over_budget_script_requires_semantic_line_breaks(self) -> None:
+        spoken = "每次给爸妈转钱他们都不收"
+        words = [
+            {"start": index * 0.1, "end": (index + 1) * 0.1, "word": char}
+            for index, char in enumerate(spoken)
+        ]
+
+        with self.assertRaisesRegex(
+            soda_pipeline.PipelineError,
+            "requires model semantic line breaks",
+        ):
+            soda_pipeline.align_script_to_whisper_words(
+                spoken,
+                words,
+                3.0,
+                caption_style=CAPTION_STYLE,
+                canvas_width=1080,
+            )
+
+        captions, _report = soda_pipeline.align_script_to_whisper_words(
+            "每次给爸妈转钱\n他们都不收",
+            words,
+            3.0,
+            caption_style=CAPTION_STYLE,
+            canvas_width=1080,
+        )
+        self.assertEqual(
+            [caption["text"] for caption in captions],
+            ["每次给爸妈转钱", "他们都不收"],
+        )
 
     def test_preflight_layout_report_contains_line_widths(self) -> None:
         config = {
@@ -142,6 +215,10 @@ class CaptionLayoutTests(unittest.TestCase):
         self.assertEqual(report["captions"][0]["line_count"], 2)
         self.assertEqual(report["captions"][0]["lines"][0], "快点击视频下方链接")
         self.assertGreater(report["captions"][0]["available_width"], 0)
+        self.assertEqual(
+            report["caption_character_budget"]["max_characters_per_line"],
+            11,
+        )
 
     def test_punctuation_is_normalized_before_layout(self) -> None:
         normalized = standalone_renderer.normalize_subtitle_text(

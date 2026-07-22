@@ -2,6 +2,7 @@
 
 面向 Codex 与 WorkBuddy 的视频剪辑 Skill 集合，目前包含：
 
+- `setup-video-editing-environment`：Windows PowerShell 优先的跨平台剪辑环境发现、复用、安装和复检，覆盖 Python、FFmpeg/FFprobe、Whisper 与可选动效依赖。
 - `manage-visual-asset-library`：跨项目图片/视频入库、Read 内容理解、有效区域标注、Manifest 校验和语义候选报告。
 - `edit-soda-music-video`：汽水音乐竖屏数字人口播混剪，覆盖去气口、倍速、字幕、素材、BGM、合规、导出和 QA。
 - `video-motion-effects`：基于 Remotion 的五种图片入场动效，可输出合成视频或透明 ProRes 4444 动效层。
@@ -10,6 +11,7 @@
 
 ```text
 skills/
+├── setup-video-editing-environment/
 ├── manage-visual-asset-library/
 ├── edit-soda-music-video/
 └── video-motion-effects/
@@ -25,6 +27,8 @@ CODEX_SKILLS="${CODEX_HOME:-$HOME/.codex}/skills"
 WORKBUDDY_SKILLS="${WORKBUDDY_HOME:-$HOME/.workbuddy}/skills"
 mkdir -p "$CODEX_SKILLS" "$WORKBUDDY_SKILLS"
 
+rsync -a --delete ai-cut-skills/skills/setup-video-editing-environment/ "$CODEX_SKILLS/setup-video-editing-environment/"
+rsync -a --delete ai-cut-skills/skills/setup-video-editing-environment/ "$WORKBUDDY_SKILLS/setup-video-editing-environment/"
 rsync -a --delete ai-cut-skills/skills/manage-visual-asset-library/ "$CODEX_SKILLS/manage-visual-asset-library/"
 rsync -a --delete ai-cut-skills/skills/manage-visual-asset-library/ "$WORKBUDDY_SKILLS/manage-visual-asset-library/"
 rsync -a --delete ai-cut-skills/skills/edit-soda-music-video/ "$CODEX_SKILLS/edit-soda-music-video/"

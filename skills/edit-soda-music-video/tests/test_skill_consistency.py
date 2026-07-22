@@ -171,6 +171,59 @@ class SkillConsistencyTests(unittest.TestCase):
         self.assertIn("不得缩小字号", docs)
         self.assertNotIn("三行时参考字号 15", docs)
 
+    def test_semantic_caption_limit_is_derived_once_not_hardcoded(self) -> None:
+        template = json.loads(
+            (SKILL_ROOT / "references" / "timeline-template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        pipeline = (SKILL_ROOT / "scripts" / "soda_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        layout = (SKILL_ROOT / "scripts" / "caption_layout.py").read_text(
+            encoding="utf-8"
+        )
+        docs = "\n".join(
+            (SKILL_ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "SKILL.md",
+                "references/brand-rules.md",
+                "references/workflow.md",
+                "references/standalone-runtime.md",
+                "agents/openai.yaml",
+            )
+        )
+
+        self.assertNotIn("max_characters_per_line", template)
+        self.assertIn("def derive_caption_character_budget", layout)
+        self.assertNotIn("def split_caption_event_text", layout)
+        self.assertIn('"caption-budget"', pipeline)
+        self.assertIn("executor_model_semantic_lines", pipeline)
+        self.assertIn("automatic_width_split_count", pipeline)
+        self.assertIn("只计算一次", docs)
+        self.assertIn("不得按字符数平均", docs)
+
+    def test_ass_font_family_contract_rejects_fallback_lists(self) -> None:
+        docs = "\n".join(
+            (SKILL_ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "SKILL.md",
+                "references/brand-rules.md",
+                "references/standalone-runtime.md",
+            )
+        )
+        pipeline = (SKILL_ROOT / "scripts" / "soda_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        renderer = (SKILL_ROOT / "scripts" / "standalone_renderer.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("不能写逗号分隔的 fallback", docs)
+        self.assertIn("validate_ass_font_config", pipeline)
+        self.assertIn("validate_ass_font_family", renderer)
+        self.assertIn("commas split ASS Style fields", (SKILL_ROOT / "scripts" / "ass_fonts.py").read_text(encoding="utf-8"))
+
     def test_readme_documents_workbuddy_sync_from_canonical_repo(self) -> None:
         readme_path = REPO_ROOT / "README.md"
         if not readme_path.exists():

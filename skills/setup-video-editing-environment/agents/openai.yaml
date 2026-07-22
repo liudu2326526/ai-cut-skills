@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频剪辑环境安装"
+  short_description: "Windows 优先的跨平台视频剪辑依赖安装、诊断与环境验证"
+  default_prompt: "使用 $setup-video-editing-environment 先发现并按能力验证当前机器已有环境；有合格候选就复用，全部不合格时再创建统一命名的 ai-video-editing 环境，优先按 Windows PowerShell 流程处理。"

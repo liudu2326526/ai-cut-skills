@@ -23,10 +23,12 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
+from ass_fonts import AssFontError, validate_ass_font_config
 from caption_layout import (
     CaptionLayoutError,
+    count_caption_characters,
+    derive_caption_character_budget,
     layout_caption_text,
-    split_caption_event_text,
 )
 from motion_effects_bridge import (
     MotionEffectsError,
@@ -312,6 +314,10 @@ def load_timeline_config(path: Path) -> dict[str, Any]:
         raise PipelineError(
             "Timeline JSON contains unresolved placeholders: " + ", ".join(placeholders)
         )
+    try:
+        validate_ass_font_config(config.get("font", {}))
+    except AssFontError as exc:
+        raise PipelineError(str(exc)) from exc
     policy = resolve_visual_policy(config)
     for index, material in enumerate(config.get("materials", [])):
         if not isinstance(material, dict):
@@ -354,6 +360,10 @@ def build_caption_layout_report(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(style, dict):
         raise PipelineError("font.caption_style must be an object")
     width = int(config.get("width", 1080))
+    try:
+        character_budget = derive_caption_character_budget(style, width)
+    except CaptionLayoutError as exc:
+        raise PipelineError(f"Unable to derive caption character budget: {exc}") from exc
     entries: list[dict[str, Any]] = []
     errors: list[str] = []
     for index, caption in enumerate(config.get("captions", [])):
@@ -372,10 +382,42 @@ def build_caption_layout_report(config: dict[str, Any]) -> dict[str, Any]:
         )
     return {
         "ok": not errors,
+        "caption_character_budget": character_budget,
         "caption_count": len(entries),
         "captions": entries,
         "errors": errors,
     }
+
+
+def cmd_caption_budget(args: argparse.Namespace) -> int:
+    timeline_path = args.timeline_json.expanduser().resolve()
+    if not timeline_path.exists():
+        raise PipelineError(f"Timeline JSON not found: {timeline_path}")
+    try:
+        config = json.loads(timeline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PipelineError(f"Unable to read timeline JSON: {timeline_path}: {exc}") from exc
+    style = config.get("font", {}).get("caption_style", {})
+    if not isinstance(style, dict):
+        raise PipelineError("font.caption_style must be an object")
+    try:
+        budget = derive_caption_character_budget(
+            style,
+            int(config.get("width", 1080)),
+        )
+    except CaptionLayoutError as exc:
+        raise PipelineError(f"Unable to derive caption character budget: {exc}") from exc
+    report = {
+        "ok": True,
+        "timeline_json": str(timeline_path),
+        "caption_character_budget": budget,
+        "instruction": (
+            "Use max_characters_per_line for model semantic segmentation; "
+            "insert semantic line breaks without changing the spoken wording."
+        ),
+    }
+    write_json(report, args.output_json)
+    return 0
 
 
 def resolve_timeline_asset(asset_root: Path, value: str) -> Path:
@@ -1233,27 +1275,13 @@ def _alignment_units(text: str) -> list[str]:
 
 
 def split_spoken_script_phrases(text: str) -> list[str]:
-    """Split narration on prose punctuation without breaking decimal amounts."""
-    source = str(text)
-    phrases: list[str] = []
-    buffer: list[str] = []
+    """Treat model-inserted line breaks as authoritative caption event boundaries."""
 
-    def flush() -> None:
-        value = normalize_subtitle_text("".join(buffer))
-        if value:
-            phrases.append(value)
-        buffer.clear()
-
-    for index, char in enumerate(source):
-        decimal_point = is_numeric_decimal_point(source, index)
-        if char in "\r\n" or (
-            unicodedata.category(char).startswith("P") and not decimal_point
-        ):
-            flush()
-        else:
-            buffer.append("." if decimal_point else char)
-    flush()
-    return phrases
+    return [
+        value
+        for raw_line in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if (value := normalize_subtitle_text(raw_line))
+    ]
 
 
 def align_script_to_whisper_words(
@@ -1264,8 +1292,30 @@ def align_script_to_whisper_words(
     caption_style: dict[str, Any] | None = None,
     canvas_width: int = 1080,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Use Whisper's real word timings as slots, then fill caller text into them."""
+    """Map model-provided semantic caption lines to actual Whisper word times."""
     phrases = split_spoken_script_phrases(script_text)
+    style = caption_style or {}
+    try:
+        character_budget = derive_caption_character_budget(style, canvas_width)
+    except CaptionLayoutError as exc:
+        raise PipelineError(f"Unable to derive caption character budget: {exc}") from exc
+    maximum_characters = int(character_budget["max_characters_per_line"])
+    segment_character_counts = [count_caption_characters(phrase) for phrase in phrases]
+    oversized = [
+        (index, phrase, count)
+        for index, (phrase, count) in enumerate(zip(phrases, segment_character_counts))
+        if count > maximum_characters
+    ]
+    if oversized:
+        detail = "; ".join(
+            f"segment {index} has {count} characters: {phrase!r}"
+            for index, phrase, count in oversized
+        )
+        raise PipelineError(
+            "Spoken script requires model semantic line breaks before Whisper mapping; "
+            f"the task-level limit is {maximum_characters} characters per line. {detail}. "
+            "Insert line breaks at complete semantic boundaries without changing the wording."
+        )
     phrase_units = [_alignment_units(phrase) for phrase in phrases]
     script_units = [unit for group in phrase_units for unit in group]
     if not script_units:
@@ -1350,28 +1400,13 @@ def align_script_to_whisper_words(
     captions: list[dict[str, Any]] = []
     cursor = 0
     previous_end = 0.0
-    visual_caption_split_count = 0
     for phrase, units in zip(phrases, phrase_units):
         count = len(units)
         if not count:
             continue
         normalized_phrase = normalize_subtitle_text(phrase)
-        try:
-            chunks = split_caption_event_text(
-                normalized_phrase,
-                caption_style or {},
-                canvas_width,
-            )
-        except CaptionLayoutError as exc:
-            raise PipelineError(
-                f"Caller caption cannot be split into safe one-line events: {exc}"
-            ) from exc
-        chunk_counts = [len(_alignment_units(chunk)) for chunk in chunks]
-        if sum(chunk_counts) != count:
-            raise PipelineError(
-                "Caption visual splitting changed the aligned script units; refusing to guess word times"
-            )
-        visual_caption_split_count += max(0, len(chunks) - 1)
+        chunks = [normalized_phrase]
+        chunk_counts = [count]
         phrase_cursor = cursor
         cursor += count
         for chunk, chunk_count in zip(chunks, chunk_counts):
@@ -1415,8 +1450,18 @@ def align_script_to_whisper_words(
         "alignment_ratio": round(exact_match_units / max(1, len(script_units)), 4),
         "caption_count": len(captions),
         "caption_time_mode": "input",
-        "visual_caption_split_count": visual_caption_split_count,
-        "caption_visual_timing_policy": "overwide phrases split at actual Whisper-aligned script unit times",
+        "caption_segmentation_source": "executor_model_semantic_lines",
+        "semantic_segment_count": len(phrases),
+        "semantic_segments": [
+            {
+                "text": phrase,
+                "character_count": count,
+            }
+            for phrase, count in zip(phrases, segment_character_counts)
+        ],
+        "caption_character_budget": character_budget,
+        "automatic_width_split_count": 0,
+        "caption_visual_timing_policy": "one model semantic line maps to one actual Whisper-timed caption event",
     }
     return captions, report
 
@@ -1800,7 +1845,7 @@ def add_common_rule_arguments(parser: argparse.ArgumentParser) -> None:
         "--script-file",
         type=Path,
         action="append",
-        help="Caller-supplied subtitle text; render fills it into mandatory Whisper word timestamps, removes prose punctuation, and preserves numeric decimal points",
+        help="Model-segmented subtitle text with one semantic caption per line; render maps each line to mandatory Whisper word timestamps",
     )
     parser.add_argument("--text", action="append")
     parser.add_argument("--video", type=Path)
@@ -1831,6 +1876,14 @@ def build_parser() -> argparse.ArgumentParser:
     sync_assets.add_argument("--checksum", action="store_true")
     sync_assets.add_argument("--force", action="store_true")
     sync_assets.set_defaults(func=cmd_sync_assets)
+
+    caption_budget = sub.add_parser(
+        "caption-budget",
+        help="Calculate one task-level semantic caption character limit from the active style",
+    )
+    caption_budget.add_argument("--timeline-json", type=Path, required=True)
+    caption_budget.add_argument("--output-json", type=Path)
+    caption_budget.set_defaults(func=cmd_caption_budget)
 
     preflight = sub.add_parser("preflight", help="Check FFmpeg, timeline, BGM, and required assets")
     preflight.add_argument("--asset-root", type=Path, required=True)
@@ -1881,7 +1934,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     repair = sub.add_parser(
         "repair-captions",
-        help="Use Whisper word timestamps as caption timing, then fill caller-supplied spoken text",
+        help="Map model-provided semantic caption lines to actual Whisper word timestamps",
     )
     repair.add_argument("--timeline-json", type=Path, required=True)
     repair.add_argument("--input", type=Path, required=True)

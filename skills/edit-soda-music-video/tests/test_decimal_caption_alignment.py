@@ -28,9 +28,17 @@ class DecimalCaptionAlignmentTests(unittest.TestCase):
     def test_phrase_splitting_never_breaks_inside_decimal_amount(self) -> None:
         self.assertEqual(
             soda_pipeline.split_spoken_script_phrases(
-                "满 0.3 元即可提现。顶部余额 8．72 元。"
+                "满 0.3 元即可提现。\n顶部余额 8．72 元。"
             ),
             ["满 0.3 元即可提现", "顶部余额 8.72 元"],
+        )
+
+    def test_punctuation_does_not_override_model_semantic_lines(self) -> None:
+        self.assertEqual(
+            soda_pipeline.split_spoken_script_phrases(
+                "每次给爸妈转钱，他们都不收"
+            ),
+            ["每次给爸妈转钱 他们都不收"],
         )
 
     def test_split_whisper_decimal_tokens_stay_in_one_caption(self) -> None:
