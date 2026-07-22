@@ -11,3 +11,5 @@ coverage/
 tmp/
 temp/
 
+# Local design documents
+docs/superpowers/specs/
