@@ -1,4 +1,4 @@
 interface:
   display_name: "Remotion 视频动效"
   short_description: "用 Remotion 渲染五种入场动效、WebGL2 卷页和透明 ProRes 图层"
-  default_prompt: "使用 $video-motion-effects 选择动效预设，生成时间线并渲染透明图层或合成视频。"
+  default_prompt: "使用 $video-motion-effects 选择动效并默认采用 list-effects 声明的 defaultPreset、defaultDuration 和 defaultSamples，保持调用方稳定布局尺寸，生成时间线并渲染透明图层或合成视频。"

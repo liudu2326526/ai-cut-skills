@@ -90,6 +90,7 @@ node "$CLI" render \
 - `layout.origin_x/origin_y` 是缩放锚点，默认素材中心。
 - 事件按 JSON 顺序从下到上叠加。
 - `effect.type` 可使用英文 type 或中文别名；渲染前会统一归一化。
+- 新任务和集成调用默认使用 `list-effects` 返回的 `defaultPreset`、`defaultDuration` 与适用时的 `defaultSamples`。兼容 preset 只允许由旧时间线或显式兼容请求指定，不得放入新任务的随机候选池。
 - `dynamic_shrink`、`perspective_settle` 使用 `samples`；`page_curl` 可设置 `back_texture_strength`，默认 `0.92`；其余效果不需要采样参数。入场阶段可以按效果改变视觉尺度，但最终 Alpha 层仍必须裁切在调用方的品牌保护区之外。
 - `composite` 输出 H.264 4:2:0，并保留主视频音频。
 - `alpha` 输出 ProRes 4444 Alpha，不包含音频；具体像素格式以当前 Remotion/FFmpeg build 的报告为准（常见为 `yuva444p10le` 或 `yuva444p12le`）。

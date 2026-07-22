@@ -41,12 +41,13 @@
   "semantic_role": "benefit_point",
   "matched_benefit_text": "满三毛就能提现",
   "special_match_rule": "withdraw_0_3",
+  "time_mode": "input",
   "start": 0.0,
   "end": 1.0
 }
 ```
 
-入点和出点必须使用 Whisper 词级时间戳映射后的当前时间轴。素材从“满/攒够/达到 0.3 元”这一利益点开始出现，覆盖到“提现”语义说完即可；不要提前覆盖前一句非利益点，也不要延长到下一个无关利益点。
+入点和出点必须直接使用 Whisper 对当前 input 识别出的字幕 `start/end`，并标记 `time_mode=input`。素材从“满/攒够/达到 0.3 元”这一利益点开始出现，覆盖到“提现”语义说完即可；不要提前覆盖前一句非利益点，也不要延长到下一个无关利益点。
 
 ## 执行顺序
 

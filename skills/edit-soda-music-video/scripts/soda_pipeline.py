@@ -1330,6 +1330,7 @@ def repair_timeline_captions(
         source_duration,
     )
     repaired_config = dict(config)
+    repaired_config["time_mode"] = "input"
     repaired_config["captions"] = generated_captions
     report = {
         "source": "caller_spoken_script",
@@ -1339,6 +1340,9 @@ def repair_timeline_captions(
         "whisper_word_timestamps": True,
         "word_timestamps": words,
         "subtitle_timing_policy": "fill_caller_script_into_actual_whisper_word_timestamps",
+        "timeline_time_mode": "input",
+        "material_timing_policy": "retime every material directly to Whisper input caption boundaries before render",
+        "material_retiming_required": bool(config.get("materials")),
         "subtitle_punctuation_policy": "remove_punctuation_keep_phrase_spaces",
         "original_caption_count": len(captions),
         "normalized_script": "\n".join(split_spoken_script_phrases(script_text)),

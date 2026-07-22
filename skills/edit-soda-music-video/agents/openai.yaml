@@ -1,4 +1,4 @@
 interface:
   display_name: "汽水音乐混剪成片"
   short_description: "汽水音乐利益点语义选材、字幕对齐无缝切换与品牌安全区混剪"
-  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪，用 Read 完成素材理解后只在利益点匹配素材，用 Whisper 实际词级时间戳生成字幕，并让同一 sequence_id 的素材以 [start,end) 区间在字幕切换点严格无缝衔接。"
+  default_prompt: "使用 $edit-soda-music-video 完成汽水混剪：用 Read 理解素材并只在利益点匹配，对去气口后的当前 input 执行 Whisper 词级识别，将时间轴、字幕和素材统一写为 time_mode=input，让素材 start/end 直接复制字幕 input 边界而不预先映射 removed_ranges 或除以倍速；所有素材默认保持源像素尺寸，只在有效内容碰撞品牌区域且平移无效时等比缩小；Remotion 效果默认采用目录声明的 preset、时长和采样数。"

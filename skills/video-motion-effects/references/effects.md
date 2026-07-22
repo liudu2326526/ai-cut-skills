@@ -8,6 +8,8 @@
 | 4 | `flash_stretch` | `reference_fourth_v1` | 0..13 | `13/30s` |
 | 5 | `page_curl` | `webgl_page_curl_v1` | 0..26 | `26/30s` |
 
+新任务和跨 Skill 集成必须从 `list-effects` 读取并使用每个效果的 `defaultPreset`、`defaultDuration` 与适用时的 `defaultSamples`。兼容 preset 仅用于显式复现旧时间线，不参与新任务随机选择；调用方只有明确需要统一重定时时才覆盖这些默认值。
+
 ## dynamic_shrink / 动感缩小
 
 ### reference_first_v2（默认）

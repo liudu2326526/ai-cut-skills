@@ -388,18 +388,32 @@ def apply_material_safe_area(
         region: dict[str, float | str],
     ) -> tuple[float, float, float, float]:
         if layout == "full_alpha":
-            return 0.0, 0.0, float(canvas_width), float(canvas_height)
+            return (
+                float(item.get("x", 0)),
+                float(item.get("y", 0)),
+                float(source_width),
+                float(source_height),
+            )
         if layout == "phone":
-            scale = min(650 / source_width, 1050 / source_height)
-            width = source_width * scale
-            height = source_height * scale
-            return (canvas_width - width) / 2, 350.0, width, height
+            width = float(source_width)
+            height = float(source_height)
+            return (
+                float(item.get("x", (canvas_width - width) / 2)),
+                float(item.get("y", 350)),
+                width,
+                height,
+            )
         if layout == "icon":
             width = float(region["width"])
             height = float(region["height"])
             return float(item.get("x", 95)), float(item.get("y", 720)), width, height
         if layout == "cta_icon":
-            return (canvas_width - 300) / 2, 650.0, 300.0, 300.0
+            return (
+                float(item.get("x", (canvas_width - source_width) / 2)),
+                float(item.get("y", 650)),
+                float(source_width),
+                float(source_height),
+            )
         raise RenderError(f"Unsupported material layout: {layout}")
 
     def map_effective_bounds(
@@ -594,7 +608,8 @@ def mapped_captions(config: dict[str, Any], main_duration: float) -> list[dict[s
         caption_time_mode = str(caption.get("time_mode") or config.get("time_mode", "original"))
         start = min(map_time(float(caption["start"]), config, caption_time_mode), main_duration)
         end = min(map_time(float(caption["end"]), config, caption_time_mode), main_duration)
-        if end - start < 0.18:
+        whisper_timed = str(caption.get("timing_source", "")) == "whisper_word_timestamps"
+        if end - start < 0.18 and not whisper_timed:
             end = min(main_duration, start + 0.18)
         if end > start:
             text = normalize_subtitle_text(str(caption["text"]))
@@ -934,15 +949,24 @@ def render_main(
                 filters.append(f"[{offset}:v]" + ",".join(chain) + f"[{asset_label}]")
                 overlay = f"[{current}][{asset_label}]overlay=x={int(transform['x'])}:y={int(transform['y'])}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
             else:
-                filters.append(f"[{offset}:v]scale={width}:{height},format=rgba[{asset_label}]")
-                overlay = f"[{current}][{asset_label}]overlay=x=0:y=0:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
+                overlay_x = str(material.get("x", 0))
+                overlay_y = str(material.get("y", 0))
+                filters.append(f"[{offset}:v]setsar=1,format=rgba[{asset_label}]")
+                overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "phone":
             transform = material.get("safe_transform")
-            target_width = int(transform["width"]) if transform else 650
-            target_height = int(transform["height"]) if transform else 1050
-            overlay_x = str(int(transform["x"])) if transform else "(W-w)/2"
-            overlay_y = str(int(transform["y"])) if transform else "350"
-            filters.append(f"[{offset}:v]scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,setsar=1,format=rgba[{asset_label}]")
+            if transform:
+                target_width = int(transform["width"])
+                target_height = int(transform["height"])
+                overlay_x = str(int(transform["x"]))
+                overlay_y = str(int(transform["y"]))
+                filters.append(
+                    f"[{offset}:v]scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,setsar=1,format=rgba[{asset_label}]"
+                )
+            else:
+                overlay_x = str(material.get("x", "(W-w)/2"))
+                overlay_y = str(material.get("y", 350))
+                filters.append(f"[{offset}:v]setsar=1,format=rgba[{asset_label}]")
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "icon":
             transform = material.get("safe_transform")
@@ -965,11 +989,18 @@ def render_main(
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "cta_icon":
             transform = material.get("safe_transform")
-            target_width = int(transform["width"]) if transform else 300
-            target_height = int(transform["height"]) if transform else 300
-            overlay_x = str(int(transform["x"])) if transform else "(W-w)/2"
-            overlay_y = str(int(transform["y"])) if transform else "650"
-            filters.append(f"[{offset}:v]scale={target_width}:{target_height},format=rgba[{asset_label}]")
+            if transform:
+                target_width = int(transform["width"])
+                target_height = int(transform["height"])
+                overlay_x = str(int(transform["x"]))
+                overlay_y = str(int(transform["y"]))
+                filters.append(
+                    f"[{offset}:v]scale={target_width}:{target_height},setsar=1,format=rgba[{asset_label}]"
+                )
+            else:
+                overlay_x = str(material.get("x", "(W-w)/2"))
+                overlay_y = str(material.get("y", 650))
+                filters.append(f"[{offset}:v]setsar=1,format=rgba[{asset_label}]")
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "motion_alpha":
             motion = material.get("motion_effect", {})

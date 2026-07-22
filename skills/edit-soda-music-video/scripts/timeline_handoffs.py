@@ -90,6 +90,19 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(captions, list):
         raise TimelineHandoffError("captions must be a list")
 
+    timeline_mode = str(config.get("time_mode", "original"))
+    whisper_timed = any(
+        isinstance(caption, dict)
+        and str(caption.get("timing_source", "")) == "whisper_word_timestamps"
+        for caption in captions
+    )
+    direct_input_alignment = timeline_mode == "input" or whisper_timed
+    errors: list[str] = []
+    if whisper_timed and timeline_mode != "input":
+        errors.append(
+            "Whisper-timed captions require timeline time_mode=input so materials use the same input clock"
+        )
+
     caption_starts: set[Decimal] = set()
     caption_boundaries: set[Decimal] = set()
     for index, caption in enumerate(captions):
@@ -97,13 +110,15 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
             raise TimelineHandoffError(f"captions[{index}] must be an object")
         mode = str(caption.get("time_mode") or config.get("time_mode", "original"))
         try:
-            start = mapped_time_decimal(
+            input_start = _tick(_seconds(caption["start"], f"captions[{index}].start"))
+            input_end = _tick(_seconds(caption["end"], f"captions[{index}].end"))
+            mapped_start = mapped_time_decimal(
                 caption["start"],
                 config,
                 mode,
                 location=f"captions[{index}].start",
             )
-            end = mapped_time_decimal(
+            mapped_end = mapped_time_decimal(
                 caption["end"],
                 config,
                 mode,
@@ -113,8 +128,14 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
             raise TimelineHandoffError(
                 f"captions[{index}] is missing required field: {exc.args[0]}"
             ) from exc
-        if end <= start:
+        if input_start < 0 or input_end <= input_start:
             raise TimelineHandoffError(f"captions[{index}] must use end > start")
+        if direct_input_alignment and mode != "input":
+            errors.append(
+                f"captions[{index}].time_mode must be input for direct Whisper input alignment"
+            )
+        start = input_start if direct_input_alignment else mapped_start
+        end = input_end if direct_input_alignment else mapped_end
         caption_starts.add(start)
         caption_boundaries.update((start, end))
 
@@ -124,13 +145,15 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
             raise TimelineHandoffError(f"materials[{index}] must be an object")
         mode = str(material.get("time_mode") or config.get("time_mode", "original"))
         try:
-            start = mapped_time_decimal(
+            input_start = _tick(_seconds(material["start"], f"materials[{index}].start"))
+            input_end = _tick(_seconds(material["end"], f"materials[{index}].end"))
+            mapped_start = mapped_time_decimal(
                 material["start"],
                 config,
                 mode,
                 location=f"materials[{index}].start",
             )
-            end = mapped_time_decimal(
+            mapped_end = mapped_time_decimal(
                 material["end"],
                 config,
                 mode,
@@ -140,8 +163,14 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
             raise TimelineHandoffError(
                 f"materials[{index}] is missing required field: {exc.args[0]}"
             ) from exc
-        if end <= start:
+        if input_start < 0 or input_end <= input_start:
             raise TimelineHandoffError(f"materials[{index}] must use end > start")
+        if direct_input_alignment and mode != "input":
+            errors.append(
+                f"materials[{index}].time_mode must be input; copy start/end directly from Whisper input caption boundaries"
+            )
+        start = input_start if direct_input_alignment else mapped_start
+        end = input_end if direct_input_alignment else mapped_end
         sequence_id = str(material.get("sequence_id") or DEFAULT_SEQUENCE_ID).strip()
         if not sequence_id:
             raise TimelineHandoffError(f"materials[{index}].sequence_id must not be empty")
@@ -161,7 +190,6 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
         )
 
     prepared.sort(key=lambda item: (item["start"], item["end"], item["index"]))
-    errors: list[str] = []
     for item in prepared:
         for field in ("start", "end"):
             value = item[field]
@@ -224,4 +252,7 @@ def validate_material_handoffs(config: dict[str, Any]) -> dict[str, Any]:
         "handoff_count": handoff_count,
         "caption_aligned": True,
         "seamless_within_sequence": True,
+        "alignment_space": "input" if direct_input_alignment else "mapped_output",
+        "whisper_timed": whisper_timed,
+        "direct_input_alignment": direct_input_alignment,
     }

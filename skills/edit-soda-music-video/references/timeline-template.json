@@ -4,7 +4,7 @@
   "fps": 30,
   "speed": 1.1,
   "tail_duration": null,
-  "time_mode": "original",
+  "time_mode": "input",
   "motion_effects": {
     "mode": "auto",
     "selection": "random",
@@ -12,9 +12,7 @@
     "apply_probability": 1.0,
     "max_events": 3,
     "eligible_layouts": ["full_alpha", "phone", "cta_icon"],
-    "min_visible_duration": 0.8,
-    "effect_duration": 0.333333,
-    "samples": 48
+    "min_visible_duration": 0.8
   },
   "warning_text": "本视频为广告创意，具体奖励金额以产品实际情况为准",
   "cta": {

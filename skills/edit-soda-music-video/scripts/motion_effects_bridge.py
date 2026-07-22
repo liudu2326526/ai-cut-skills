@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import random
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,8 +25,8 @@ DEFAULT_POLICY = {
     "max_events": 3,
     "eligible_layouts": ["full_alpha", "phone", "cta_icon"],
     "min_visible_duration": 0.8,
-    "effect_duration": 10 / 30,
-    "samples": 48,
+    "effect_duration": None,
+    "samples": None,
 }
 
 
@@ -73,11 +72,15 @@ def resolve_motion_policy(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(layouts, list) or not all(isinstance(item, str) for item in layouts):
         raise MotionEffectsError("motion_effects.eligible_layouts must be a list of layout names")
     min_duration = float(policy["min_visible_duration"])
-    effect_duration = float(policy["effect_duration"])
-    samples = int(policy["samples"])
-    if min_duration <= 0 or effect_duration <= 0:
+    effect_duration_raw = policy.get("effect_duration")
+    effect_duration = (
+        None if effect_duration_raw is None else float(effect_duration_raw)
+    )
+    samples_raw = policy.get("samples")
+    samples = None if samples_raw is None else int(samples_raw)
+    if min_duration <= 0 or (effect_duration is not None and effect_duration <= 0):
         raise MotionEffectsError("motion effect durations must be positive")
-    if not 1 <= samples <= 96:
+    if samples is not None and not 1 <= samples <= 96:
         raise MotionEffectsError("motion_effects.samples must be between 1 and 96")
     policy.update(
         {
@@ -121,6 +124,7 @@ def inspect_motion_skill(config: dict[str, Any]) -> dict[str, Any]:
         project / "node_modules" / "remotion" / "package.json",
         project / "node_modules" / "@remotion" / "renderer" / "package.json",
         project / "node_modules" / "@remotion" / "bundler" / "package.json",
+        project / "node_modules" / "@vysmo" / "transitions" / "package.json",
     ]
     missing: list[str] = []
     if not root.exists():
@@ -203,37 +207,6 @@ def _probe(path: Path) -> dict[str, Any]:
     }
 
 
-def _alpha_bbox(path: Path) -> tuple[int, int, int, int] | None:
-    summary = _probe(path)
-    if not summary["pix_fmt"].lower().startswith(("rgba", "bgra", "argb", "abgr", "yuva", "gbrap", "ya")):
-        return None
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "info",
-            "-i",
-            str(path),
-            "-vf",
-            "alphaextract,bbox=min_val=1",
-            "-frames:v",
-            "1",
-            "-f",
-            "null",
-            "-",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    match = re.search(r"x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+) w:(\d+) h:(\d+)", result.stderr)
-    if not match:
-        return None
-    x1, _x2, y1, _y2, width, height = (int(value) for value in match.groups())
-    return x1, y1, width, height
-
-
 def _layout_for_material(
     material: dict[str, Any], canvas_width: int, canvas_height: int
 ) -> tuple[dict[str, float], list[int] | None]:
@@ -252,7 +225,11 @@ def _layout_for_material(
         if isinstance(safe_transform, dict)
         else material.get("effective_region_canvas")
     )
-    if isinstance(effective_region, dict) and isinstance(effective_canvas, dict):
+    if (
+        layout == "icon"
+        and isinstance(effective_region, dict)
+        and isinstance(effective_canvas, dict)
+    ):
         target_width = float(effective_canvas["width"])
         target_height = float(effective_canvas["height"])
         x = float(effective_canvas["x"])
@@ -275,31 +252,17 @@ def _layout_for_material(
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "full_alpha":
-        bbox = _alpha_bbox(source_path)
-        if bbox:
-            bx, by, bw, bh = bbox
-            scale_x = canvas_width / source_width
-            scale_y = canvas_height / source_height
-            target_width = bw * scale_x
-            target_height = bh * scale_y
-            x = bx * scale_x
-            y = by * scale_y
-            origin_x = target_width / 2
-            origin_y = target_height / 2
-            source_crop = [bx, by, bw, bh]
-        else:
-            target_width = float(canvas_width)
-            target_height = float(canvas_height)
-            x = 0.0
-            y = 0.0
-            origin_x = target_width / 2
-            origin_y = target_height / 2
+        target_width = float(source_width)
+        target_height = float(source_height)
+        x = float(material.get("x", 0))
+        y = float(material.get("y", 0))
+        origin_x = target_width / 2
+        origin_y = target_height / 2
     elif layout == "phone":
-        scale = min(650 / source_width, 1050 / source_height)
-        target_width = source_width * scale
-        target_height = source_height * scale
-        x = (canvas_width - target_width) / 2
-        y = 350.0
+        target_width = float(source_width)
+        target_height = float(source_height)
+        x = float(material.get("x", (canvas_width - target_width) / 2))
+        y = float(material.get("y", 350))
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "icon":
@@ -320,10 +283,10 @@ def _layout_for_material(
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "cta_icon":
-        target_width = 300.0
-        target_height = 300.0
-        x = (canvas_width - target_width) / 2
-        y = 650.0
+        target_width = float(source_width)
+        target_height = float(source_height)
+        x = float(material.get("x", (canvas_width - target_width) / 2))
+        y = float(material.get("y", 650))
         origin_x = target_width / 2
         origin_y = target_height / 2
     else:
@@ -423,14 +386,37 @@ def plan_motion_effects(
     for index, material in selected:
         effect = rng.choice(effects)
         presets = effect.get("presets") if isinstance(effect.get("presets"), list) else []
-        preset = rng.choice(presets) if presets else None
+        default_preset = effect.get("defaultPreset")
+        if default_preset not in presets:
+            raise MotionEffectsError(
+                f"Effect catalog must provide a valid defaultPreset for {effect['type']}"
+            )
+        preset = str(default_preset)
+        configured_duration = policy.get("effect_duration")
+        default_duration = effect.get("defaultDuration")
+        if configured_duration is None and default_duration is None:
+            raise MotionEffectsError(
+                f"Effect catalog is missing defaultDuration for {effect['type']}"
+            )
+        requested_duration = float(
+            configured_duration
+            if configured_duration is not None
+            else default_duration
+        )
         effect_duration = min(
-            policy["effect_duration"],
+            requested_duration,
             float(material["mapped_end"]) - float(material["mapped_start"]) - 1 / fps,
         )
         if effect_duration <= 0:
             continue
         remotion_layout, source_crop = _layout_for_material(material, canvas_width, canvas_height)
+        configured_samples = policy.get("samples")
+        default_samples = effect.get("defaultSamples")
+        samples = (
+            int(configured_samples)
+            if configured_samples is not None and default_samples is not None
+            else (int(default_samples) if default_samples is not None else None)
+        )
         planned = {
             "material_index": index,
             "material_name": str(material.get("name", f"material_{index}")),
@@ -439,7 +425,7 @@ def plan_motion_effects(
             "preset": preset,
             "effect_duration": effect_duration,
             "clip_duration": effect_duration + 1 / fps,
-            "samples": policy["samples"],
+            "samples": samples,
             "layout": remotion_layout,
             "base_layout": str(material.get("layout")),
             "source_crop": source_crop,
@@ -532,7 +518,7 @@ def render_motion_effects(
                         "type": event["effect"],
                         **({"preset": event["preset"]} if event["preset"] else {}),
                         "duration": event["effect_duration"],
-                        "samples": event["samples"],
+                        **({"samples": event["samples"]} if event.get("samples") is not None else {}),
                     },
                 }
             ],
