@@ -1,0 +1,4 @@
+interface:
+  display_name: "通用视觉素材库"
+  short_description: "跨项目图片视频入库、Read理解、有效区域标注与语义候选检索"
+  default_prompt: "Use $manage-visual-asset-library to build or update a visual asset manifest and return description-based semantic candidates with reasons."

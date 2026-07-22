@@ -19,6 +19,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
+from caption_layout import CaptionLayoutError, layout_caption_text
 from motion_effects_bridge import (
     MotionEffectsError,
     apply_motion_overrides,
@@ -72,6 +73,31 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         raise RenderError("visual_policy.material_safe_area margins must be integers") from exc
     if any(value < 0 for value in safe_area.values()):
         raise RenderError("visual_policy.material_safe_area margins must be non-negative")
+    icon_placement_raw = raw.get("icon_caption_placement", {})
+    if not isinstance(icon_placement_raw, dict):
+        raise RenderError("visual_policy.icon_caption_placement must be an object")
+    icon_placement_mode = str(icon_placement_raw.get("mode", "above_caption"))
+    if icon_placement_mode != "above_caption":
+        raise RenderError(
+            "visual_policy.icon_caption_placement.mode must be above_caption"
+        )
+    try:
+        icon_caption_gap = float(icon_placement_raw.get("gap", 72))
+        icon_caption_line_height = float(
+            icon_placement_raw.get("line_height_scale", 1.2)
+        )
+    except (TypeError, ValueError) as exc:
+        raise RenderError(
+            "visual_policy.icon_caption_placement gap and line_height_scale must be numbers"
+        ) from exc
+    if not 0 <= icon_caption_gap <= 500:
+        raise RenderError(
+            "visual_policy.icon_caption_placement.gap must be between 0 and 500"
+        )
+    if not 1 <= icon_caption_line_height <= 2.5:
+        raise RenderError(
+            "visual_policy.icon_caption_placement.line_height_scale must be between 1 and 2.5"
+        )
     canvas_width = int(config.get("width", 1080))
     canvas_height = int(config.get("height", 1920))
     if (
@@ -99,6 +125,11 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             raw.get("align_material_cuts_to_caption_boundaries", True)
         ),
         "material_safe_area": safe_area,
+        "icon_caption_placement": {
+            "mode": icon_placement_mode,
+            "gap": icon_caption_gap,
+            "line_height_scale": icon_caption_line_height,
+        },
         "source_black_bar_check": source_check,
     }
     if not all(
@@ -242,6 +273,20 @@ def load_timeline(path: Path) -> dict[str, Any]:
     shadow = float(style.get("shadow", 0))
     if not 2 <= outline <= 3 or shadow != 0:
         raise RenderError("caption policy requires a 2-3px black outline and shadow=0")
+    caption_style = resolve_caption_style(
+        data,
+        int(data.get("width", 1080)),
+        int(data.get("height", 1920)),
+    )
+    for index, caption in enumerate(data.get("captions", [])):
+        try:
+            layout_caption_text(
+                normalize_subtitle_text(str(caption.get("text", ""))),
+                caption_style,
+                int(data.get("width", 1080)),
+            )
+        except CaptionLayoutError as exc:
+            raise RenderError(f"captions[{index}] cannot fit the caption safe area: {exc}") from exc
     return data
 
 
@@ -365,11 +410,114 @@ def has_alpha_channel(pix_fmt: str | None) -> bool:
     return value in {"rgba", "bgra", "argb", "abgr", "ya8", "ya16be", "ya16le"} or value.startswith(("yuva", "gbrap"))
 
 
+def estimate_caption_line_count(
+    text: str,
+    caption_style: dict[str, Any],
+    canvas_width: int,
+) -> int:
+    """Use the same explicit layout calculation as ASS generation."""
+
+    if not str(text).strip():
+        return 1
+    try:
+        return int(layout_caption_text(text, caption_style, canvas_width)["line_count"])
+    except CaptionLayoutError as exc:
+        raise RenderError(f"Caption cannot fit above icon material: {exc}") from exc
+
+
+def caption_block_top(
+    caption_style: dict[str, Any],
+    text: str,
+    canvas_width: int,
+    canvas_height: int,
+    *,
+    line_height_scale: float,
+) -> float:
+    line_count = estimate_caption_line_count(text, caption_style, canvas_width)
+    line_height = (
+        float(caption_style["font_size"])
+        * float(caption_style["scale_y"])
+        / 100.0
+        * line_height_scale
+    )
+    block_height = line_count * line_height + float(caption_style["outline"]) * 2.0
+    alignment = int(caption_style["alignment"])
+    if caption_style["position_mode"] == "margins":
+        if alignment <= 3:
+            anchor_y = canvas_height - float(caption_style["margin_vertical"])
+        elif alignment <= 6:
+            anchor_y = canvas_height / 2.0
+        else:
+            anchor_y = float(caption_style["margin_vertical"])
+    else:
+        anchor_y = float(caption_style["position_y"])
+    if alignment <= 3:
+        return anchor_y - block_height
+    if alignment <= 6:
+        return anchor_y - block_height / 2.0
+    return anchor_y
+
+
+def resolve_icon_caption_placement(
+    config: dict[str, Any],
+    material: dict[str, Any],
+    icon_width: float,
+    icon_height: float,
+    canvas_width: int,
+    canvas_height: int,
+    captions: list[dict[str, Any]] | None,
+) -> dict[str, float | str]:
+    x = float(material.get("x", 95))
+    if material.get("y") is not None:
+        return {
+            "x": x,
+            "y": float(material["y"]),
+            "width": float(icon_width),
+            "height": float(icon_height),
+            "source": "explicit_y",
+        }
+
+    policy = resolve_visual_policy(config)["icon_caption_placement"]
+    caption_style = resolve_caption_style(config, canvas_width, canvas_height)
+    overlapping: list[dict[str, Any]] = []
+    material_start = material.get("mapped_start")
+    material_end = material.get("mapped_end")
+    for caption in captions or []:
+        if material_start is None or material_end is None:
+            overlapping.append(caption)
+            continue
+        if (
+            float(caption["start"]) < float(material_end)
+            and float(caption["end"]) > float(material_start)
+        ):
+            overlapping.append(caption)
+    texts = [str(caption.get("text", "")) for caption in overlapping] or [""]
+    top = min(
+        caption_block_top(
+            caption_style,
+            text,
+            canvas_width,
+            canvas_height,
+            line_height_scale=float(policy["line_height_scale"]),
+        )
+        for text in texts
+    )
+    return {
+        "x": x,
+        "y": top - float(policy["gap"]) - float(icon_height),
+        "width": float(icon_width),
+        "height": float(icon_height),
+        "source": "caption_relative_default",
+    }
+
+
 def apply_material_safe_area(
     config: dict[str, Any],
     materials: list[dict[str, Any]],
     canvas_width: int,
     canvas_height: int,
+    *,
+    captions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     policy = resolve_visual_policy(config)
     margins = policy["material_safe_area"]
@@ -406,7 +554,17 @@ def apply_material_safe_area(
         if layout == "icon":
             width = float(region["width"])
             height = float(region["height"])
-            return float(item.get("x", 95)), float(item.get("y", 720)), width, height
+            placement = resolve_icon_caption_placement(
+                config,
+                item,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+                captions,
+            )
+            item["resolved_placement"] = placement
+            return float(placement["x"]), float(placement["y"]), width, height
         if layout == "cta_icon":
             return (
                 float(item.get("x", (canvas_width - source_width) / 2)),
@@ -468,6 +626,11 @@ def apply_material_safe_area(
             item["source_crop"] = [crop_x, crop_y, crop_width, crop_height]
             asset_width = float(crop_width)
             asset_height = float(crop_height)
+            item["resolved_placement"] = {
+                **item["resolved_placement"],
+                "width": asset_width,
+                "height": asset_height,
+            }
             effective = {
                 "x": asset_x,
                 "y": asset_y,
@@ -660,13 +823,28 @@ def escape_ass_text(text: str) -> str:
     return text.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
 
 
+DECIMAL_POINT_CHARS = {".", "．"}
+
+
+def is_numeric_decimal_point(text: str, index: int) -> bool:
+    """Return True for a decimal point surrounded by decimal digits."""
+    return (
+        0 < index < len(text) - 1
+        and text[index] in DECIMAL_POINT_CHARS
+        and text[index - 1].isdigit()
+        and text[index + 1].isdigit()
+    )
+
+
 def normalize_subtitle_text(text: str) -> str:
-    """Remove subtitle punctuation while keeping phrase-separating spaces."""
+    """Remove prose punctuation while preserving semantic decimal points."""
     normalized_lines: list[str] = []
     for raw_line in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         chars: list[str] = []
-        for char in raw_line:
-            if unicodedata.category(char).startswith("P"):
+        for index, char in enumerate(raw_line):
+            if is_numeric_decimal_point(raw_line, index):
+                chars.append(".")
+            elif unicodedata.category(char).startswith("P"):
                 chars.append(" ")
             else:
                 chars.append(char)
@@ -721,7 +899,23 @@ def resolve_caption_style(config: dict[str, Any], width: int, height: int) -> di
         "margin_right": int(number("margin_right", 72, 0, width)),
         "margin_vertical": int(number("margin_vertical", 330, 0, height)),
         "position_mode": position_mode,
+        "wrap_mode": str(raw.get("wrap_mode", "balanced_explicit")),
+        "minimum_horizontal_margin": number(
+            "minimum_horizontal_margin",
+            96 * width / 1080,
+            0,
+            width / 2,
+        ),
+        "width_safety_ratio": number("width_safety_ratio", 0.92, 0.75, 1.0),
+        "preferred_max_lines": int(raw.get("preferred_max_lines", 2)),
+        "max_lines": int(raw.get("max_lines", 3)),
     }
+    if style["wrap_mode"] != "balanced_explicit":
+        raise RenderError("font.caption_style.wrap_mode must be balanced_explicit")
+    if not 1 <= style["preferred_max_lines"] <= style["max_lines"] <= 3:
+        raise RenderError(
+            "font.caption_style lines must satisfy 1 <= preferred_max_lines <= max_lines <= 3"
+        )
     if position_mode != "margins":
         x = number("x", 0, -width * 2, width * 2)
         y = number("y", 0, -height * 2, height * 2)
@@ -797,9 +991,17 @@ Style: Default,{body_family},{ass_number(caption_style['font_size'])},{rgb_to_as
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
-    for caption in captions:
+    for index, caption in enumerate(captions):
+        try:
+            layout = layout_caption_text(
+                str(caption["text"]),
+                caption_style,
+                width,
+            )
+        except CaptionLayoutError as exc:
+            raise RenderError(f"captions[{index}] cannot fit the caption safe area: {exc}") from exc
         text = apply_brand_style(
-            str(caption["text"]),
+            "\n".join(str(line) for line in layout["lines"]),
             body_family,
             brand_family,
             body_color,
@@ -970,6 +1172,7 @@ def render_main(
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "icon":
             transform = material.get("safe_transform")
+            resolved = material.get("resolved_placement")
             crop = material.get("source_crop")
             if not crop or len(crop) != 4:
                 raise RenderError(f"Missing source_crop for icon material: {material.get('path')}")
@@ -982,8 +1185,16 @@ def render_main(
                     chain.append(f"scale={target_width}:{target_height}")
                 overlay_x, overlay_y = int(transform["x"]), int(transform["y"])
             else:
-                overlay_x = int(material.get("x", 95))
-                overlay_y = int(material.get("y", 720))
+                if isinstance(resolved, dict):
+                    overlay_x = int(round(float(resolved["x"])))
+                    overlay_y = int(round(float(resolved["y"])))
+                elif material.get("y") is not None:
+                    overlay_x = int(material.get("x", 95))
+                    overlay_y = int(material["y"])
+                else:
+                    raise RenderError(
+                        f"Missing resolved_placement for caption-relative icon: {material.get('path')}"
+                    )
             chain.extend(["setsar=1", "format=rgba"])
             filters.append(f"[{offset}:v]" + ",".join(chain) + f"[{asset_label}]")
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
@@ -1189,7 +1400,7 @@ def build_report(
         "pre_roll_duration": 0.0,
         "opening_policy": "direct-to-digital-human",
         "caption_layer": "above-all-materials",
-        "caption_text_policy": "caller-script text filled into actual Whisper word timestamps; punctuation removed at render",
+        "caption_text_policy": "caller-script text filled into actual Whisper word timestamps; prose punctuation removed and numeric decimal points preserved at render",
         "material_matching_policy": "supplemental materials only on explicit benefit-point narration",
         "material_collision_policy": "only effective_region content can trigger repositioning or scaling",
         "logo_layer": "above-materials-captions-and-cta",
@@ -1299,6 +1510,7 @@ def main() -> int:
         materials,
         int(config.get("width", 1080)),
         int(config.get("height", 1920)),
+        captions=captions,
     )
     try:
         motion_plan = plan_motion_effects(
@@ -1319,6 +1531,21 @@ def main() -> int:
     )
     report["captions"] = captions
     report["caption_style"] = caption_style
+    report["caption_layout"] = {
+        "ok": True,
+        "captions": [
+            {
+                "index": index,
+                "text": str(caption["text"]),
+                **layout_caption_text(
+                    str(caption["text"]),
+                    caption_style,
+                    int(config.get("width", 1080)),
+                ),
+            }
+            for index, caption in enumerate(captions)
+        ],
+    }
     report["material_timeline"] = timeline_handoffs
     report["motion_effects"] = motion_plan
     if motion_plan.get("status") == "planned":

@@ -12,6 +12,7 @@ import argparse
 import difflib
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -22,6 +23,11 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
+from caption_layout import (
+    CaptionLayoutError,
+    layout_caption_text,
+    split_caption_event_text,
+)
 from motion_effects_bridge import (
     MotionEffectsError,
     apply_motion_overrides,
@@ -37,7 +43,7 @@ from timeline_handoffs import (
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RENDERER = SKILL_ROOT / "scripts" / "standalone_renderer.py"
-DEFAULT_ASSET_MANIFEST_SCRIPT = SKILL_ROOT / "scripts" / "asset_manifest.py"
+VISUAL_ASSET_LIBRARY_SKILL_NAME = "manage-visual-asset-library"
 
 CHANNELS = ("old-down", "new-high-mid", "free-listen", "coin-non-down", "general")
 GLOBAL_BANNED_TERMS = ("红包", "花不完", "必听", "必点", "躺平", "emo")
@@ -46,7 +52,7 @@ ARROW_CHARS = ("→", "←", "↑", "↓", "➜", "➡", "⇩", "⤵", "↘", "�
 THIRD_PARTY_TERMS = ("抖音", "剪映")
 DEFAULT_BGM_TARGET_LUFS = -28.0
 DEFAULT_BGM_FINE_VOLUME = 1.0
-DEFAULT_ASSET_MANIFEST_NAME = "soda_assets_manifest.json"
+DEFAULT_ASSET_MANIFEST_NAME = "visual_assets_manifest.json"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".svg"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
@@ -333,11 +339,43 @@ def load_timeline_config(path: Path) -> dict[str, Any]:
         raise PipelineError(
             "caption policy requires a 2-3px black outline and shadow=0"
         )
+    caption_layout = build_caption_layout_report(config)
+    if not caption_layout["ok"]:
+        raise PipelineError("; ".join(str(error) for error in caption_layout["errors"]))
     try:
         resolve_motion_policy(config)
     except MotionEffectsError as exc:
         raise PipelineError(str(exc)) from exc
     return config
+
+
+def build_caption_layout_report(config: dict[str, Any]) -> dict[str, Any]:
+    style = config.get("font", {}).get("caption_style", {})
+    if not isinstance(style, dict):
+        raise PipelineError("font.caption_style must be an object")
+    width = int(config.get("width", 1080))
+    entries: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, caption in enumerate(config.get("captions", [])):
+        text = normalize_subtitle_text(str(caption.get("text", "")))
+        try:
+            layout = layout_caption_text(text, style, width)
+        except CaptionLayoutError as exc:
+            errors.append(f"captions[{index}] cannot fit the caption safe area: {exc}")
+            continue
+        entries.append(
+            {
+                "index": index,
+                "text": text,
+                **layout,
+            }
+        )
+    return {
+        "ok": not errors,
+        "caption_count": len(entries),
+        "captions": entries,
+        "errors": errors,
+    }
 
 
 def resolve_timeline_asset(asset_root: Path, value: str) -> Path:
@@ -398,6 +436,31 @@ def resolve_asset_manifest_path(timeline_path: Path, value: Path | None) -> Path
     return timeline_path.expanduser().resolve().parent / DEFAULT_ASSET_MANIFEST_NAME
 
 
+def resolve_visual_asset_library_script() -> Path:
+    candidates: list[Path] = []
+    configured = os.environ.get("VISUAL_ASSET_LIBRARY_SKILL_DIR")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    candidates.append(SKILL_ROOT.parent / VISUAL_ASSET_LIBRARY_SKILL_NAME)
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+    candidates.append(codex_home / "skills" / VISUAL_ASSET_LIBRARY_SKILL_NAME)
+
+    checked: list[str] = []
+    for root in candidates:
+        script = root.resolve() / "scripts" / "asset_manifest.py"
+        if str(script) in checked:
+            continue
+        checked.append(str(script))
+        if script.is_file():
+            return script
+    raise PipelineError(
+        "Required Skill manage-visual-asset-library was not found. "
+        "Install it beside edit-soda-music-video or set VISUAL_ASSET_LIBRARY_SKILL_DIR. "
+        "Checked: "
+        + ", ".join(checked)
+    )
+
+
 def validate_asset_understanding(
     manifest_path: Path,
     asset_root: Path,
@@ -418,7 +481,7 @@ def validate_asset_understanding(
     }
     if not manifest_path.exists():
         report["errors"].append(
-            "素材 Manifest 不存在；先运行 sync-assets，再由执行模型用 Read 逐张理解所有图片和视频并写回 description。"
+            "视觉素材 Manifest 不存在；先使用 manage-visual-asset-library 完成同步、Read 理解和校验。"
         )
         return report
     try:
@@ -562,6 +625,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
     motion_effects: dict[str, Any] | None = None
     asset_understanding: dict[str, Any] | None = None
     material_timeline: dict[str, Any] | None = None
+    caption_layout: dict[str, Any] | None = None
 
     def check(name: str, path: Path, required: bool = True) -> None:
         checks.append(
@@ -603,6 +667,9 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             visual_errors.append(f"Material timeline validation failed: {exc}")
             material_timeline = {"ok": False, "error": str(exc)}
         visual_policy = resolve_visual_policy(config)
+        caption_layout = build_caption_layout_report(config)
+        if not caption_layout["ok"]:
+            visual_errors.extend(str(item) for item in caption_layout["errors"])
         asset_understanding = validate_asset_understanding(manifest_path, asset_root, config)
         if not asset_understanding["ok"]:
             visual_errors.extend(str(item) for item in asset_understanding["errors"])
@@ -658,6 +725,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
         "asset_manifest": str(manifest_path),
         "asset_understanding": asset_understanding,
         "material_timeline": material_timeline,
+        "caption_layout": caption_layout,
         "timeline_json": str(timeline_path),
         "renderer": str(renderer),
         "binaries": binaries,
@@ -671,9 +739,10 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
         "motion_effects": motion_effects,
         "notes": [
             "The base renderer uses Python standard library, ffmpeg, and ffprobe; installed video-motion-effects adds optional Remotion alpha overlays.",
-            "The skill stores asset categories only; pass task-specific --asset-root, --bgm, and --timeline-json values.",
+            "The visual Manifest stores image/video metadata and model-written understanding only; pass task-specific --asset-root, --bgm, and --timeline-json values.",
             "Internal asset labels and file names must not bypass final visual, subtitle, or speech compliance checks.",
             "Caption backplates are forbidden; captions require a 2-3px black outline, shadow=0, and a layer above all materials.",
+            "Caption preflight reports explicit balanced lines and weighted line widths; text that needs more than three safe lines is blocked instead of shrinking the font.",
             "Material size is preserved by default; the renderer repositions first and, only when required, scales to the largest size that fits outside the logo and warning protection regions without a fixed scale threshold.",
             "Rendering is blocked until every image/video in the synced Manifest has a model-written description and source-pixel effective_region, and all timeline visual assets are tracked by that Manifest.",
             "Every supplemental material must be tied to explicit benefit-point narration through semantic_role=benefit_point and matched_benefit_text.",
@@ -689,9 +758,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 
 def cmd_sync_assets(args: argparse.Namespace) -> int:
+    manifest_script = resolve_visual_asset_library_script()
     command = [
         sys.executable,
-        str(DEFAULT_ASSET_MANIFEST_SCRIPT.resolve()),
+        str(manifest_script),
         "--workspace",
         str(args.workspace.expanduser().resolve()),
         "--asset-root",
@@ -1103,13 +1173,28 @@ def read_script_text(paths: list[Path] | None, inline_text: list[str] | None) ->
     return "\n".join(parts).strip()
 
 
+DECIMAL_POINT_CHARS = {".", "．"}
+
+
+def is_numeric_decimal_point(text: str, index: int) -> bool:
+    """Return True for a decimal point surrounded by decimal digits."""
+    return (
+        0 < index < len(text) - 1
+        and text[index] in DECIMAL_POINT_CHARS
+        and text[index - 1].isdigit()
+        and text[index + 1].isdigit()
+    )
+
+
 def normalize_subtitle_text(text: str) -> str:
-    """Remove subtitle punctuation while keeping phrase-separating spaces."""
+    """Remove prose punctuation while preserving semantic decimal points."""
     normalized_lines: list[str] = []
     for raw_line in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         chars: list[str] = []
-        for char in raw_line:
-            if unicodedata.category(char).startswith("P"):
+        for index, char in enumerate(raw_line):
+            if is_numeric_decimal_point(raw_line, index):
+                chars.append(".")
+            elif unicodedata.category(char).startswith("P"):
                 chars.append(" ")
             else:
                 chars.append(char)
@@ -1148,7 +1233,8 @@ def _alignment_units(text: str) -> list[str]:
 
 
 def split_spoken_script_phrases(text: str) -> list[str]:
-    """Split caller narration on line breaks and punctuation before cleanup."""
+    """Split narration on prose punctuation without breaking decimal amounts."""
+    source = str(text)
     phrases: list[str] = []
     buffer: list[str] = []
 
@@ -1158,11 +1244,14 @@ def split_spoken_script_phrases(text: str) -> list[str]:
             phrases.append(value)
         buffer.clear()
 
-    for char in str(text):
-        if char in "\r\n" or unicodedata.category(char).startswith("P"):
+    for index, char in enumerate(source):
+        decimal_point = is_numeric_decimal_point(source, index)
+        if char in "\r\n" or (
+            unicodedata.category(char).startswith("P") and not decimal_point
+        ):
             flush()
         else:
-            buffer.append(char)
+            buffer.append("." if decimal_point else char)
     flush()
     return phrases
 
@@ -1171,6 +1260,9 @@ def align_script_to_whisper_words(
     script_text: str,
     words: list[dict[str, Any]],
     source_duration: float,
+    *,
+    caption_style: dict[str, Any] | None = None,
+    canvas_width: int = 1080,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Use Whisper's real word timings as slots, then fill caller text into them."""
     phrases = split_spoken_script_phrases(script_text)
@@ -1258,35 +1350,59 @@ def align_script_to_whisper_words(
     captions: list[dict[str, Any]] = []
     cursor = 0
     previous_end = 0.0
+    visual_caption_split_count = 0
     for phrase, units in zip(phrases, phrase_units):
         count = len(units)
         if not count:
             continue
-        ranges = [script_times[cursor + offset] for offset in range(count)]
-        actual_ranges = [item for item in ranges if item is not None]
+        normalized_phrase = normalize_subtitle_text(phrase)
+        try:
+            chunks = split_caption_event_text(
+                normalized_phrase,
+                caption_style or {},
+                canvas_width,
+            )
+        except CaptionLayoutError as exc:
+            raise PipelineError(
+                f"Caller caption cannot be split into safe one-line events: {exc}"
+            ) from exc
+        chunk_counts = [len(_alignment_units(chunk)) for chunk in chunks]
+        if sum(chunk_counts) != count:
+            raise PipelineError(
+                "Caption visual splitting changed the aligned script units; refusing to guess word times"
+            )
+        visual_caption_split_count += max(0, len(chunks) - 1)
+        phrase_cursor = cursor
         cursor += count
-        if not actual_ranges:
-            continue
-        start = max(0.0, min(item[0] for item in actual_ranges))
-        end = min(source_duration, max(item[1] for item in actual_ranges))
-        if end <= start:
-            end = min(source_duration, start + fallback_duration)
-        if start < previous_end:
-            start = previous_end
-            end = max(end, start + fallback_duration)
-        end = min(max(start, end), source_duration)
-        if end <= start:
-            continue
-        captions.append(
-            {
-                "start": round(start, 4),
-                "end": round(end, 4),
-                "text": normalize_subtitle_text(phrase),
-                "time_mode": "input",
-                "timing_source": "whisper_word_timestamps",
-            }
-        )
-        previous_end = end
+        for chunk, chunk_count in zip(chunks, chunk_counts):
+            ranges = [
+                script_times[phrase_cursor + offset]
+                for offset in range(chunk_count)
+            ]
+            phrase_cursor += chunk_count
+            actual_ranges = [item for item in ranges if item is not None]
+            if not actual_ranges:
+                continue
+            start = max(0.0, min(item[0] for item in actual_ranges))
+            end = min(source_duration, max(item[1] for item in actual_ranges))
+            if end <= start:
+                end = min(source_duration, start + fallback_duration)
+            if start < previous_end:
+                start = previous_end
+                end = max(end, start + fallback_duration)
+            end = min(max(start, end), source_duration)
+            if end <= start:
+                continue
+            captions.append(
+                {
+                    "start": round(start, 4),
+                    "end": round(end, 4),
+                    "text": chunk,
+                    "time_mode": "input",
+                    "timing_source": "whisper_word_timestamps",
+                }
+            )
+            previous_end = end
 
     if not captions:
         raise PipelineError("Whisper word timestamps could not be mapped to the supplied script")
@@ -1299,6 +1415,8 @@ def align_script_to_whisper_words(
         "alignment_ratio": round(exact_match_units / max(1, len(script_units)), 4),
         "caption_count": len(captions),
         "caption_time_mode": "input",
+        "visual_caption_split_count": visual_caption_split_count,
+        "caption_visual_timing_policy": "overwide phrases split at actual Whisper-aligned script unit times",
     }
     return captions, report
 
@@ -1328,6 +1446,8 @@ def repair_timeline_captions(
         script_text,
         words,
         source_duration,
+        caption_style=config.get("font", {}).get("caption_style", {}),
+        canvas_width=int(config.get("width", 1080)),
     )
     repaired_config = dict(config)
     repaired_config["time_mode"] = "input"
@@ -1343,7 +1463,7 @@ def repair_timeline_captions(
         "timeline_time_mode": "input",
         "material_timing_policy": "retime every material directly to Whisper input caption boundaries before render",
         "material_retiming_required": bool(config.get("materials")),
-        "subtitle_punctuation_policy": "remove_punctuation_keep_phrase_spaces",
+        "subtitle_punctuation_policy": "remove_prose_punctuation_preserve_numeric_decimal_points",
         "original_caption_count": len(captions),
         "normalized_script": "\n".join(split_spoken_script_phrases(script_text)),
         **alignment_report,
@@ -1680,7 +1800,7 @@ def add_common_rule_arguments(parser: argparse.ArgumentParser) -> None:
         "--script-file",
         type=Path,
         action="append",
-        help="Caller-supplied subtitle text; render fills it into mandatory Whisper word timestamps and removes punctuation",
+        help="Caller-supplied subtitle text; render fills it into mandatory Whisper word timestamps, removes prose punctuation, and preserves numeric decimal points",
     )
     parser.add_argument("--text", action="append")
     parser.add_argument("--video", type=Path)
@@ -1702,7 +1822,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_assets = sub.add_parser(
         "sync-assets",
         aliases=("load-assets",),
-        help="Load workspace asset metadata and update its manifest only when assets change",
+        help="Compatibility forwarder to manage-visual-asset-library asset synchronization",
     )
     sync_assets.add_argument("--workspace", type=Path, required=True)
     sync_assets.add_argument("--asset-root", type=Path, required=True)
@@ -1717,7 +1837,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument(
         "--asset-manifest",
         type=Path,
-        help="Synced soda_assets_manifest.json; defaults to the timeline directory",
+        help="Synced visual_assets_manifest.json; legacy soda_assets_manifest.json remains accepted when passed explicitly",
     )
     preflight.add_argument("--bgm", type=Path, required=True)
     preflight.add_argument("--input", type=Path)
@@ -1784,7 +1904,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument(
         "--asset-manifest",
         type=Path,
-        help="Synced soda_assets_manifest.json; defaults to the timeline directory",
+        help="Synced visual_assets_manifest.json; legacy soda_assets_manifest.json remains accepted when passed explicitly",
     )
     render.add_argument("--timeline-json", type=Path, required=True)
     render.add_argument("--logo-variant", choices=("white", "black"), default="white")

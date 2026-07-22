@@ -4,7 +4,7 @@
 
 渲染器检查 `${CODEX_HOME:-$HOME/.codex}/skills/video-motion-effects`。当 Skill、Node、Chrome、Remotion 和 `@vysmo/transitions` 固定依赖均可用时，从其 `list-effects` 返回值中随机选择效果；当前正式效果包括 `dynamic_shrink`、`bottom_rise`、`perspective_settle`、`flash_stretch` 和 `page_curl`。选中效果后默认使用目录返回的 `defaultPreset`、`defaultDuration` 和适用时的 `defaultSamples`；兼容 preset 不参与随机选择。
 
-Remotion 只生成短透明 ProRes 4444 入场片段。入口素材读取 Manifest 的 `effective_region` 做品牌区域碰撞计算，但只有 `icon` 裁切 effective_region；`phone`、`full_alpha` 和 `cta_icon` 必须把完整源文件按源像素尺寸送入动效。源画布和空白留边不触发碰撞。只有有效内容真实碰到 logo/警示语保护区且移动无法解决时才缩放整个素材到最大安全尺寸。随后在动效素材上方绘制字幕与 CTA，再叠加 logo，最后绘制警示语。
+Remotion 只生成短透明 ProRes 4444 入场片段。入口素材读取 Manifest 的 `effective_region` 做品牌区域碰撞计算，但只有 `icon` 裁切 effective_region；`phone`、`full_alpha` 和 `cta_icon` 必须把完整源文件按源像素尺寸送入动效。如果时间线显式把 `icon` 加入动效候选，Remotion 必须复用渲染器已根据当前字幕上边界解析出的 `effective_region_canvas`/`resolved_placement` 坐标，不得另外回退到固定 `y=720`。源画布和空白留边不触发碰撞。只有有效内容真实碰到 logo/警示语保护区且移动无法解决时才缩放整个素材到最大安全尺寸。随后在动效素材上方绘制字幕与 CTA，再叠加 logo，最后绘制警示语。
 
 动效层完全继承素材的 `[start,end)` 半开区间。同一 `sequence_id` 的下一个素材在字幕切换点直接接管，不为 Remotion 入场效果额外添加 0.2–0.3 秒缓冲、交叉淡化或重叠帧。
 

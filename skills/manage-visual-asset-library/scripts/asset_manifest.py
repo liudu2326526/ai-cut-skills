@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize workspace asset metadata into a JSON manifest."""
+"""Synchronize image and video metadata into a workspace visual asset manifest."""
 
 from __future__ import annotations
 
@@ -16,30 +16,11 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
-DEFAULT_MANIFEST_NAME = "soda_assets_manifest.json"
+DEFAULT_MANIFEST_NAME = "visual_assets_manifest.json"
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
-AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".svg"}
-FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".woff", ".woff2"}
-SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt", ".lrc"}
-SUPPORTED_EXTENSIONS = (
-    VIDEO_EXTENSIONS
-    | AUDIO_EXTENSIONS
-    | IMAGE_EXTENSIONS
-    | FONT_EXTENSIONS
-    | SUBTITLE_EXTENSIONS
-)
-
-ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("official_end_card", ("尾帧", "end-card", "end_card", "endcard", "outro")),
-    ("brand_logo", ("logo", "品牌标识", "品牌标志")),
-    ("background_music", ("bgm", "背景音乐", "background-music", "background_music")),
-    ("cta_visual", ("cta", "行动引导", "下载引导", "call-to-action")),
-    ("ui_operation", ("录屏", "操作演示", "screen-record", "screen_record", "ui-demo", "ui_demo")),
-    ("scene_visual", ("场景", "scene", "通勤", "驾驶", "居家")),
-    ("benefit_visual", ("利益点", "金币", "提现", "会员", "免费听", "benefit")),
-)
+SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 class ManifestError(RuntimeError):
@@ -67,31 +48,9 @@ def ensure_inside_workspace(workspace: Path, path: Path) -> None:
 def file_kind(extension: str) -> str:
     if extension in VIDEO_EXTENSIONS:
         return "video"
-    if extension in AUDIO_EXTENSIONS:
-        return "audio"
     if extension in IMAGE_EXTENSIONS:
         return "image"
-    if extension in FONT_EXTENSIONS:
-        return "font"
-    if extension in SUBTITLE_EXTENSIONS:
-        return "subtitle"
     return "unknown"
-
-
-def infer_category(relative_path: str, kind: str) -> str:
-    if kind == "font":
-        return "font"
-    if kind == "subtitle":
-        return "subtitle"
-    lowered = relative_path.casefold()
-    for category, keywords in ROLE_RULES:
-        if any(keyword.casefold() in lowered for keyword in keywords):
-            return category
-    return {
-        "video": "video_material",
-        "audio": "audio_material",
-        "image": "image_material",
-    }.get(kind, "other_material")
 
 
 def sha256_file(path: Path) -> str:
@@ -122,7 +81,7 @@ def probe_media(path: Path) -> dict[str, Any]:
             "-v",
             "error",
             "-show_entries",
-            "format=duration,format_name,bit_rate:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,sample_rate,channels",
+            "format=duration,format_name,bit_rate:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate",
             "-of",
             "json",
             str(path),
@@ -143,14 +102,10 @@ def probe_media(path: Path) -> dict[str, Any]:
         (stream for stream in data.get("streams", []) if stream.get("codec_type") == "video"),
         {},
     )
-    audio = next(
-        (stream for stream in data.get("streams", []) if stream.get("codec_type") == "audio"),
-        {},
-    )
     duration = format_data.get("duration")
     bit_rate = format_data.get("bit_rate")
     return {
-        "probe_ok": True,
+        "probe_ok": bool(video),
         "duration_seconds": round(float(duration), 3) if duration else None,
         "format_name": format_data.get("format_name"),
         "bit_rate": int(bit_rate) if bit_rate else None,
@@ -158,9 +113,6 @@ def probe_media(path: Path) -> dict[str, Any]:
         "width": video.get("width"),
         "height": video.get("height"),
         "fps": parse_fraction(video.get("avg_frame_rate") or video.get("r_frame_rate")),
-        "audio_codec": audio.get("codec_name"),
-        "sample_rate": int(audio["sample_rate"]) if audio.get("sample_rate") else None,
-        "channels": audio.get("channels"),
     }
 
 
@@ -230,15 +182,16 @@ def build_asset_record(
 ) -> tuple[dict[str, Any], bool]:
     if previous and identity_matches(identity, previous, checksum):
         record = dict(previous)
-        for key, value in identity.items():
-            record[key] = value
+        record.pop("category", None)
+        record.pop("category_source", None)
+        if not checksum:
+            record.pop("sha256", None)
+        record.update(identity)
         return record, True
 
     record = dict(identity)
     record["file_name"] = Path(identity["relative_path"]).name
-    record["category"] = infer_category(identity["relative_path"], identity["kind"])
-    record["category_source"] = "inferred"
-    if not quick and identity["kind"] in {"video", "audio", "image"}:
+    if not quick:
         record["media"] = probe_media(asset_root / identity["relative_path"])
     return record, False
 
@@ -248,7 +201,6 @@ def summarize(assets: list[dict[str, Any]]) -> dict[str, Any]:
         "total": len(assets),
         "total_size_bytes": sum(int(item.get("size_bytes") or 0) for item in assets),
         "by_kind": dict(sorted(Counter(item["kind"] for item in assets).items())),
-        "by_category": dict(sorted(Counter(item["category"] for item in assets).items())),
     }
 
 
@@ -285,11 +237,7 @@ def sync_manifest(args: argparse.Namespace) -> dict[str, Any]:
         and existing.get("fingerprint_mode") == fingerprint_mode
         and existing.get("metadata_mode") == metadata_mode
     )
-    if (
-        compatible_existing
-        and not args.force
-        and existing.get("fingerprint") == current_fingerprint
-    ):
+    if compatible_existing and not args.force and existing.get("fingerprint") == current_fingerprint:
         return {
             "ok": True,
             "status": "unchanged",
@@ -303,7 +251,9 @@ def sync_manifest(args: argparse.Namespace) -> dict[str, Any]:
     previous_assets = {
         item.get("relative_path"): item
         for item in (existing or {}).get("assets", [])
-        if isinstance(item, dict) and item.get("relative_path")
+        if isinstance(item, dict)
+        and item.get("relative_path")
+        and str(item.get("kind", "")).lower() in {"image", "video"}
     }
     current_paths = {item["relative_path"] for item in identities}
     previous_paths = set(previous_assets)
@@ -371,8 +321,8 @@ def parse_args() -> argparse.Namespace:
         help=f"Workspace-relative or absolute manifest path; default: <workspace>/{DEFAULT_MANIFEST_NAME}",
     )
     parser.add_argument("--quick", action="store_true", help="Skip ffprobe metadata extraction")
-    parser.add_argument("--checksum", action="store_true", help="Use SHA-256 content hashes for change detection")
-    parser.add_argument("--force", action="store_true", help="Rewrite the manifest even when the fingerprint matches")
+    parser.add_argument("--checksum", action="store_true", help="Use SHA-256 only for change detection")
+    parser.add_argument("--force", action="store_true", help="Rewrite even when the fingerprint matches")
     return parser.parse_args()
 
 

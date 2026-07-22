@@ -219,6 +219,7 @@ def _layout_for_material(
     layout = str(material["layout"])
     source_crop: list[int] | None = None
     safe_transform = material.get("safe_transform")
+    resolved_placement = material.get("resolved_placement")
     effective_region = material.get("effective_region")
     effective_canvas = (
         safe_transform.get("effective_bounds")
@@ -278,8 +279,16 @@ def _layout_for_material(
         else:
             target_width = float(source_width)
             target_height = float(source_height)
-        x = float(material.get("x", 95))
-        y = float(material.get("y", 720))
+        if isinstance(resolved_placement, dict):
+            x = float(resolved_placement["x"])
+            y = float(resolved_placement["y"])
+        elif material.get("y") is not None:
+            x = float(material.get("x", 95))
+            y = float(material["y"])
+        else:
+            raise MotionEffectsError(
+                f"Missing resolved icon placement: {source_path}"
+            )
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "cta_icon":

@@ -106,6 +106,138 @@ class PhoneLayoutTests(unittest.TestCase):
         self.assertEqual(layout["y"], 350.0)
 
 
+class IconCaptionPlacementTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "width": 1080,
+            "height": 1920,
+            "font": {
+                "caption_style": {
+                    "font_size": 70,
+                    "scale_x": 100,
+                    "scale_y": 100,
+                    "outline": 3,
+                    "alignment": 2,
+                    "margin_left": 72,
+                    "margin_right": 72,
+                    "position_mode": "center_offset",
+                    "x": 0,
+                    "y": -500,
+                }
+            },
+        }
+        self.material = {
+            "layout": "icon",
+            "path": "/tmp/icon.png",
+            "x": 425,
+            "mapped_start": 0.0,
+            "mapped_end": 1.0,
+            "effective_region": {
+                "x": 0,
+                "y": 0,
+                "width": 243,
+                "height": 220,
+                "coordinate_space": "source_pixels",
+            },
+        }
+
+    def prepare(self, material: dict, text: str) -> dict:
+        with patch.object(
+            standalone_renderer,
+            "media_summary",
+            return_value={"width": 243, "height": 220},
+        ):
+            return standalone_renderer.apply_material_safe_area(
+                self.config,
+                [material],
+                1080,
+                1920,
+                captions=[{"start": 0.0, "end": 1.0, "text": text}],
+            )[0]
+
+    def test_icon_defaults_to_above_the_overlapping_caption(self) -> None:
+        result = self.prepare(dict(self.material), "开车听 走路听 在家听")
+
+        self.assertEqual(result["source_crop"], [0, 0, 243, 220])
+        self.assertEqual(
+            result["resolved_placement"],
+            {
+                "x": 425.0,
+                "y": 1078.0,
+                "width": 243.0,
+                "height": 220.0,
+                "source": "caption_relative_default",
+            },
+        )
+        self.assertEqual(result["effective_region_canvas"]["y"], 1078.0)
+        self.assertNotIn("safe_transform", result)
+
+    def test_explicit_icon_y_overrides_caption_relative_default(self) -> None:
+        material = dict(self.material)
+        material["y"] = 800
+
+        result = self.prepare(material, "开车听 走路听 在家听")
+
+        self.assertEqual(result["resolved_placement"]["y"], 800.0)
+        self.assertEqual(result["resolved_placement"]["source"], "explicit_y")
+
+    def test_multiline_caption_moves_icon_up(self) -> None:
+        single = self.prepare(dict(self.material), "第一行")
+        multiline = self.prepare(dict(self.material), "第一行\n第二行")
+
+        self.assertLess(
+            multiline["resolved_placement"]["y"],
+            single["resolved_placement"]["y"],
+        )
+        self.assertEqual(multiline["resolved_placement"]["y"], 994.0)
+
+    def test_static_icon_filter_uses_resolved_placement(self) -> None:
+        captured: dict[str, list[str]] = {}
+
+        def capture(command: list[str], *, label: str) -> None:
+            self.assertEqual(label, "main-render")
+            captured["command"] = command
+
+        material = {
+            "layout": "icon",
+            "path": Path("/tmp/icon.png"),
+            "kind": "image",
+            "mapped_start": 0.0,
+            "mapped_end": 1.0,
+            "source_crop": [0, 0, 243, 220],
+            "resolved_placement": {
+                "x": 425.0,
+                "y": 1078.0,
+                "width": 243.0,
+                "height": 220.0,
+                "source": "caption_relative_default",
+            },
+        }
+        assets = {
+            "font": Path("/tmp/body.ttf"),
+            "logo": Path("/tmp/logo.png"),
+        }
+        with patch.object(standalone_renderer, "run", side_effect=capture):
+            standalone_renderer.render_main(
+                Path("/tmp/input.mp4"),
+                Path("/tmp/captions.ass"),
+                Path("/tmp/output.mp4"),
+                self.config | {"fps": 30, "speed": 1.0},
+                assets,
+                Path("/tmp/fonts"),
+                [material],
+                1.0,
+                show_warning=False,
+                logo_mode="full_canvas",
+            )
+
+        filter_complex = captured["command"][
+            captured["command"].index("-filter_complex") + 1
+        ]
+        self.assertIn("overlay=x=425:y=1078", filter_complex)
+        self.assertNotIn("overlay=x=95:y=720", filter_complex)
+
+
 class PreserveMaterialSizeTests(unittest.TestCase):
     def test_full_alpha_safe_area_starts_from_source_dimensions(self) -> None:
         material = {
@@ -288,6 +420,7 @@ class PreserveMaterialSizeTests(unittest.TestCase):
             (icon_layout["width"], icon_layout["height"]),
             (220.0, 300.0),
         )
+        self.assertEqual((icon_layout["x"], icon_layout["y"]), (280.0, 550.0))
 
 
 class MotionEffectsIntegrationTests(unittest.TestCase):

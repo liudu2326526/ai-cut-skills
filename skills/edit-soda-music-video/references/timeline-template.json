@@ -34,12 +34,17 @@
       "outline": 3,
       "shadow": 0,
       "alignment": 2,
-      "margin_left": 72,
-      "margin_right": 72,
+      "margin_left": 96,
+      "margin_right": 96,
       "margin_vertical": 330,
       "position_mode": "center_offset",
       "x": 0,
       "y": -500,
+      "wrap_mode": "balanced_explicit",
+      "minimum_horizontal_margin": 96,
+      "width_safety_ratio": 0.92,
+      "preferred_max_lines": 2,
+      "max_lines": 3,
       "editor_reference": {
         "font_size": 13,
         "scale": 100,
@@ -76,6 +81,11 @@
       "right": 48,
       "top": 320,
       "bottom": 180
+    },
+    "icon_caption_placement": {
+      "mode": "above_caption",
+      "gap": 72,
+      "line_height_scale": 1.2
     },
     "source_black_bar_check": "error"
   },
