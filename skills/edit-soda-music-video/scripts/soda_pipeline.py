@@ -29,6 +29,10 @@ from motion_effects_bridge import (
     resolve_motion_policy,
 )
 from special_material_matches import special_match_metadata_errors
+from timeline_handoffs import (
+    TimelineHandoffError,
+    validate_material_handoffs,
+)
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -180,6 +184,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "match_materials_only_for_benefit_points": bool(
             raw.get("match_materials_only_for_benefit_points", True)
         ),
+        "seamless_material_handoffs": bool(
+            raw.get("seamless_material_handoffs", True)
+        ),
+        "align_material_cuts_to_caption_boundaries": bool(
+            raw.get("align_material_cuts_to_caption_boundaries", True)
+        ),
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -195,10 +205,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "preserve_material_size",
             "reposition_before_scale",
             "match_materials_only_for_benefit_points",
+            "seamless_material_handoffs",
+            "align_material_cuts_to_caption_boundaries",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise PipelineError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material handoffs must be seamless and caption-aligned, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
         )
     return policy
 
@@ -549,6 +561,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
     visual_policy: dict[str, Any] | None = None
     motion_effects: dict[str, Any] | None = None
     asset_understanding: dict[str, Any] | None = None
+    material_timeline: dict[str, Any] | None = None
 
     def check(name: str, path: Path, required: bool = True) -> None:
         checks.append(
@@ -581,6 +594,14 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
         except MotionEffectsError as exc:
             visual_errors.append(str(exc))
             motion_effects = {"ready": False, "error": str(exc)}
+        speed_override = getattr(args, "speed", None)
+        if speed_override is not None:
+            config["speed"] = validate_speed(speed_override)
+        try:
+            material_timeline = validate_material_handoffs(config)
+        except TimelineHandoffError as exc:
+            visual_errors.append(f"Material timeline validation failed: {exc}")
+            material_timeline = {"ok": False, "error": str(exc)}
         visual_policy = resolve_visual_policy(config)
         asset_understanding = validate_asset_understanding(manifest_path, asset_root, config)
         if not asset_understanding["ok"]:
@@ -636,6 +657,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
         "asset_root": str(asset_root),
         "asset_manifest": str(manifest_path),
         "asset_understanding": asset_understanding,
+        "material_timeline": material_timeline,
         "timeline_json": str(timeline_path),
         "renderer": str(renderer),
         "binaries": binaries,
@@ -655,6 +677,7 @@ def preflight_report(args: argparse.Namespace) -> dict[str, Any]:
             "Material size is preserved by default; the renderer repositions first and, only when required, scales to the largest size that fits outside the logo and warning protection regions without a fixed scale threshold.",
             "Rendering is blocked until every image/video in the synced Manifest has a model-written description and source-pixel effective_region, and all timeline visual assets are tracked by that Manifest.",
             "Every supplemental material must be tied to explicit benefit-point narration through semantic_role=benefit_point and matched_benefit_text.",
+            "Materials use half-open [start,end) intervals. Inside one sequence_id, every end must exactly equal the next start, and every handoff must equal a caption start; use a different sequence_id only for an intentional digital-human gap.",
         ],
     }
 

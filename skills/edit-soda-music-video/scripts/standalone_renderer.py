@@ -26,6 +26,11 @@ from motion_effects_bridge import (
     render_motion_effects,
 )
 from special_material_matches import special_match_metadata_errors
+from timeline_handoffs import (
+    TimelineHandoffError,
+    map_timeline_time,
+    validate_material_handoffs,
+)
 
 
 class RenderError(RuntimeError):
@@ -87,6 +92,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
         "match_materials_only_for_benefit_points": bool(
             raw.get("match_materials_only_for_benefit_points", True)
         ),
+        "seamless_material_handoffs": bool(
+            raw.get("seamless_material_handoffs", True)
+        ),
+        "align_material_cuts_to_caption_boundaries": bool(
+            raw.get("align_material_cuts_to_caption_boundaries", True)
+        ),
         "material_safe_area": safe_area,
         "source_black_bar_check": source_check,
     }
@@ -102,10 +113,12 @@ def resolve_visual_policy(config: dict[str, Any]) -> dict[str, Any]:
             "preserve_material_size",
             "reposition_before_scale",
             "match_materials_only_for_benefit_points",
+            "seamless_material_handoffs",
+            "align_material_cuts_to_caption_boundaries",
         )
     ) or source_check != "error" or policy["caption_outline_policy"] != "thin_black_2_3px":
         raise RenderError(
-            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
+            "visual policy is mandatory: generated/caption/material backplates must be forbidden, caption_outline_policy must be thin_black_2_3px, logo and warning must be top layers, material matching must be limited to benefit points, material handoffs must be seamless and caption-aligned, material safe area must be enforced, material size must be preserved before fitting to the largest brand-safe size, and source_black_bar_check must be error"
         )
     return policy
 
@@ -372,6 +385,7 @@ def apply_material_safe_area(
         item: dict[str, Any],
         source_width: int,
         source_height: int,
+        region: dict[str, float | str],
     ) -> tuple[float, float, float, float]:
         if layout == "full_alpha":
             return 0.0, 0.0, float(canvas_width), float(canvas_height)
@@ -381,9 +395,9 @@ def apply_material_safe_area(
             height = source_height * scale
             return (canvas_width - width) / 2, 350.0, width, height
         if layout == "icon":
-            width = 230.0
-            height = source_height * width / source_width
-            return float(item.get("x", 95)), 720.0, width, height
+            width = float(region["width"])
+            height = float(region["height"])
+            return float(item.get("x", 95)), float(item.get("y", 720)), width, height
         if layout == "cta_icon":
             return (canvas_width - 300) / 2, 650.0, 300.0, 300.0
         raise RenderError(f"Unsupported material layout: {layout}")
@@ -424,16 +438,38 @@ def apply_material_safe_area(
             item,
             source_width,
             source_height,
-        )
-        effective = map_effective_bounds(
             region,
-            asset_x,
-            asset_y,
-            asset_width,
-            asset_height,
-            source_width,
-            source_height,
         )
+        if layout == "icon":
+            crop_x = max(0, min(source_width - 1, int(round(float(region["x"])))))
+            crop_y = max(0, min(source_height - 1, int(round(float(region["y"])))))
+            crop_width = max(
+                1,
+                min(source_width - crop_x, int(round(float(region["width"])))),
+            )
+            crop_height = max(
+                1,
+                min(source_height - crop_y, int(round(float(region["height"])))),
+            )
+            item["source_crop"] = [crop_x, crop_y, crop_width, crop_height]
+            asset_width = float(crop_width)
+            asset_height = float(crop_height)
+            effective = {
+                "x": asset_x,
+                "y": asset_y,
+                "width": asset_width,
+                "height": asset_height,
+            }
+        else:
+            effective = map_effective_bounds(
+                region,
+                asset_x,
+                asset_y,
+                asset_width,
+                asset_height,
+                source_width,
+                source_height,
+            )
         item["effective_region_canvas"] = {
             key: round(value, 4) for key, value in effective.items()
         }
@@ -490,8 +526,12 @@ def apply_material_safe_area(
             target_effective_height = effective["height"] * scale
             target_effective_x = safe_left + (safe_width - target_effective_width) / 2
             target_effective_y = safe_top + (safe_height - target_effective_height) / 2
-            region_offset_x = float(region["x"]) * target_asset_width / source_width
-            region_offset_y = float(region["y"]) * target_asset_height / source_height
+            if layout == "icon":
+                region_offset_x = 0.0
+                region_offset_y = 0.0
+            else:
+                region_offset_x = float(region["x"]) * target_asset_width / source_width
+                region_offset_y = float(region["y"]) * target_asset_height / source_height
             transform = {
                 "width": max(1, int(round(target_asset_width))),
                 "height": max(1, int(round(target_asset_height))),
@@ -542,25 +582,10 @@ def resolve_logo_mode(config: dict[str, Any], logo_info: dict[str, Any]) -> str:
 
 
 def map_time(value: float, config: dict[str, Any], mode_override: str | None = None) -> float:
-    mode = mode_override or config.get("time_mode", "original")
-    speed = float(config.get("speed", 1.1))
-    if mode == "output":
-        return max(0.0, value)
-    if mode == "input":
-        return max(0.0, value / speed)
-    if mode != "original":
-        raise RenderError(f"Unsupported time_mode: {mode}")
-    original = value
-    removed = 0.0
-    for start, end in config.get("removed_ranges", []):
-        start_value, end_value = float(start), float(end)
-        if original >= end_value:
-            removed += end_value - start_value
-            continue
-        if original > start_value:
-            original = start_value
-        break
-    return max(0.0, (original - removed) / speed)
+    try:
+        return map_timeline_time(value, config, mode_override)
+    except TimelineHandoffError as exc:
+        raise RenderError(str(exc)) from exc
 
 
 def mapped_captions(config: dict[str, Any], main_duration: float) -> list[dict[str, Any]]:
@@ -590,10 +615,22 @@ def mapped_materials(config: dict[str, Any], assets: dict[str, Any], main_durati
     result: list[dict[str, Any]] = []
     for material in assets["materials"]:
         item = dict(material)
-        item["mapped_start"] = min(map_time(float(material["start"]), config), main_duration)
-        item["mapped_end"] = min(map_time(float(material["end"]), config), main_duration)
+        material_time_mode = str(material.get("time_mode") or config.get("time_mode", "original"))
+        item["mapped_start"] = min(
+            map_time(float(material["start"]), config, material_time_mode),
+            main_duration,
+        )
+        item["mapped_end"] = min(
+            map_time(float(material["end"]), config, material_time_mode),
+            main_duration,
+        )
+        item["time_mode"] = material_time_mode
         result.append(item)
     return result
+
+
+def half_open_enable(start: float, end: float) -> str:
+    return f"gte(t,{float(start):.9f})*lt(t,{float(end):.9f})"
 
 
 def ass_timestamp(seconds: float) -> str:
@@ -878,7 +915,7 @@ def render_main(
     current = "base"
     for offset, material in enumerate(materials, start=2):
         asset_label, next_label = f"asset{offset}", f"v{offset}"
-        enable = f"between(t,{material['mapped_start']:.3f},{material['mapped_end']:.3f})"
+        enable = half_open_enable(material["mapped_start"], material["mapped_end"])
         layout = material["layout"]
         if layout == "full_alpha":
             transform = material.get("safe_transform")
@@ -909,12 +946,22 @@ def render_main(
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "icon":
             transform = material.get("safe_transform")
+            crop = material.get("source_crop")
+            if not crop or len(crop) != 4:
+                raise RenderError(f"Missing source_crop for icon material: {material.get('path')}")
+            crop_x, crop_y, crop_width, crop_height = (int(value) for value in crop)
+            chain = [f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y}"]
             if transform:
-                filters.append(f"[{offset}:v]scale={int(transform['width'])}:{int(transform['height'])},format=rgba[{asset_label}]")
+                target_width = int(transform["width"])
+                target_height = int(transform["height"])
+                if target_width != crop_width or target_height != crop_height:
+                    chain.append(f"scale={target_width}:{target_height}")
                 overlay_x, overlay_y = int(transform["x"]), int(transform["y"])
             else:
-                filters.append(f"[{offset}:v]scale=230:-1,format=rgba[{asset_label}]")
-                overlay_x, overlay_y = int(material.get("x", 95)), 720
+                overlay_x = int(material.get("x", 95))
+                overlay_y = int(material.get("y", 720))
+            chain.extend(["setsar=1", "format=rgba"])
+            filters.append(f"[{offset}:v]" + ",".join(chain) + f"[{asset_label}]")
             overlay = f"[{current}][{asset_label}]overlay=x={overlay_x}:y={overlay_y}:format=auto:enable='{enable}':eof_action=pass[{next_label}]"
         elif layout == "cta_icon":
             transform = material.get("safe_transform")
@@ -967,7 +1014,7 @@ def render_main(
         None,
     )
     if cta:
-        enable = f"between(t,{cta['mapped_start']:.3f},{cta['mapped_end']:.3f})"
+        enable = half_open_enable(cta["mapped_start"], cta["mapped_end"])
         cta_config = config.get("cta", {})
         caption_filters.extend(
             [
@@ -1191,6 +1238,10 @@ def main() -> int:
     speed = float(config.get("speed", 1.1))
     if not 0.5 <= speed <= 2.0:
         raise RenderError("speed must be between 0.5 and 2.0 for FFmpeg atempo")
+    try:
+        timeline_handoffs = validate_material_handoffs(config)
+    except TimelineHandoffError as exc:
+        raise RenderError(f"Material timeline validation failed: {exc}") from exc
     assets = resolve_assets(config, asset_root, args.logo_variant)
     assets["materials"] = attach_manifest_effective_regions(
         assets["materials"],
@@ -1237,6 +1288,7 @@ def main() -> int:
     )
     report["captions"] = captions
     report["caption_style"] = caption_style
+    report["material_timeline"] = timeline_handoffs
     report["motion_effects"] = motion_plan
     if motion_plan.get("status") == "planned":
         report["renderer"] = "standalone-ffmpeg-remotion-effects"

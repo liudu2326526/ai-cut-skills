@@ -71,6 +71,8 @@
     "preserve_material_size": true,
     "reposition_before_scale": true,
     "match_materials_only_for_benefit_points": true,
+    "seamless_material_handoffs": true,
+    "align_material_cuts_to_caption_boundaries": true,
     "material_safe_area": {
       "left": 48,
       "right": 48,

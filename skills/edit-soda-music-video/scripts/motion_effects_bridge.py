@@ -303,10 +303,20 @@ def _layout_for_material(
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "icon":
-        target_width = 230.0
-        target_height = source_height * target_width / source_width
+        if isinstance(effective_region, dict):
+            source_crop = [
+                int(round(float(effective_region["x"]))),
+                int(round(float(effective_region["y"]))),
+                max(1, int(round(float(effective_region["width"])))),
+                max(1, int(round(float(effective_region["height"])))),
+            ]
+            target_width = float(source_crop[2])
+            target_height = float(source_crop[3])
+        else:
+            target_width = float(source_width)
+            target_height = float(source_height)
         x = float(material.get("x", 95))
-        y = 720.0
+        y = float(material.get("y", 720))
         origin_x = target_width / 2
         origin_y = target_height / 2
     elif layout == "cta_icon":
