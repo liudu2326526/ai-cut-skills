@@ -1,25 +1,26 @@
 ---
 name: aivideoeditor-pre-roll
-description: Create pre-roll videos either through the remote AIVideoEditor API or through the bundled standalone local runner. Use when Codex needs to preview, submit, poll, troubleshoot, or locally render a pre-roll/front-ad video from ad copy, visual type, asset strategy, subtitle placement, disclaimer text, required logo image assets, auto-selecting light/dark logo variants from background brightness, local asset manifest understanding, or optional Ark/Seedance/TTS credentials and voice choices.
+description: Create pre-roll videos with the bundled standalone local runner. Use when Codex needs to preview, troubleshoot, or locally render a pre-roll/front-ad video from ad copy, visual type, asset strategy, subtitle placement, disclaimer text, required logo image assets, auto-selecting light/dark logo variants from background brightness, local asset manifest understanding, or optional Ark/Seedance/TTS credentials and voice choices.
 ---
 
 # AIVideoEditor Pre-roll
 
-Use this skill in two ways:
-
-1. Remote mode: call an existing AIVideoEditor backend.
-2. Standalone mode: render locally without the backend.
+Use the bundled standalone local runner. This skill is designed for local rendering without any server connection or login.
 
 This skill bundles the fixed business material package `assets/汽水物料-新`. Standalone mode uses that package by default for Soda Music logos, fonts, and the subtitle-triggered Soda icon. Callers can still override or add their own local files/URLs.
 
 ## Hard Rules
 
 - Logo must come from a real image asset. Do not use typed text as a logo substitute.
+- The persistent Soda Music logo is required and fixed at the top-left: crop transparent padding, render the real logo at 190px wide, x=40, y=40, opacity 1.0. Do not disable it or vary its size/position per request.
+- Every deliverable video must include the persistent top-left Soda Music logo and the bottom-right visual-only disclaimer. These two layers are mandatory even when the user only asks for a quick test, disables main subtitles, or provides a custom payload.
 - Deliverable videos must have real visual content. Do not use color blocks, procedural test animations, blank clips, or other placeholder footage as the main video.
+- When revising an unsatisfactory video, always restart from a clean/uncomposited source video such as `baseVideoPath`, `revisionSourcePath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, `backgroundVideo`, or `backgroundImage`. Do not use `finalVideoPath`, `final.mp4`, or any clip that already contains subtitles, logos, disclaimers, motion effects, BGM mixing, or overlays as the next input.
 - Copy/subtitles must not contain `红包` or `花不完`; do not send those words to voiceover.
 - Main subtitles must render `汽水音乐` and `汽水` with SodaFont, brand green `#3BFD42`, black outline, and a slightly larger scale by default. Other main subtitle text should use 方正兰亭.
 - The visual-only disclaimer defaults to clear white `Microsoft YaHei` with a black outline. Do not apply subtitle motion effects to the disclaimer.
 - When main subtitles contain `汽水音乐` or `汽水`, keep the normal subtitle font rule and additionally place a real logo/icon above that subtitle line.
+- Ordinary overlay/insert materials should render below the main subtitle/disclaimer layers. Prefer fixing layer order over moving captions; only use `keywordMaterialOverlay.avoidSubtitleArea=true` when the material should also stay physically away from the caption area.
 - Do not use arrow icons.
 - Do not use unsafe source material: watermark or AI watermark, suggestive imagery, real visible faces, tattoos, known IP, film/TV stills, license plates, military/political content, or similar risky material.
 - For old coin/reward screenshots, prefer big amounts over 10 yuan, except copy such as `下载汽水音乐之前`, `三毛`, or `五毛` can use small amounts. For new coin screenshots, use small amounts under 10 yuan; coin arrival amounts should stay under 50,000 coins.
@@ -83,12 +84,6 @@ python scripts\run_pre_roll_standalone.py --dry-run `
   --asset-preflight off
 ```
 
-Remote API preview:
-
-```powershell
-python scripts\run_pre_roll_api.py --dry-run --script-text "每天听歌15分钟，你的余额就会一直涨" --visual-template-id decompression --asset-strategy generated --subtitle-position lower_center --extra-json '{"brandOverlay":{"logoPath":"D:\\path\\to\\logo.png"}}'
-```
-
 Subtitle logo trigger example:
 
 ```powershell
@@ -119,9 +114,12 @@ Read and use [scripts/run_pre_roll_standalone.py](scripts/run_pre_roll_standalon
 Standalone mode can:
 
 - use a caller-supplied background video or image
+- preserve the clean background as the revision source so later edits can recompose from a fresh base
 - optionally call Ark/Seedance with `--ark-api-key`
 - generate subtitles and a visual-only disclaimer locally
 - overlay a caller-supplied logo image on every render
+- render the persistent top-left logo with fixed placement and fixed size
+- force the visual-only bottom-right disclaimer on every render, falling back to the default text when a caller passes an empty value
 - use bundled `assets/汽水物料-新` logos/fonts/icons by default
 - optionally place a second logo/icon above subtitle lines that contain `汽水音乐` or `汽水`
 - choose `dark` or `light` logo automatically from the rendered background's overall brightness
@@ -151,24 +149,20 @@ Recommended inputs:
 - `--brand-primary-color`, `--brand-outline-color`, and `--brand-font-scale` when overriding the Soda Music word highlight
 - `--subtitle-audio-sync auto`
 - `--subtitle-offset-seconds 0.2` when a specific voice still feels early or late
-- `--disclaimer-text`
+- `--disclaimer-text`; this customizes the mandatory bottom-right disclaimer text and cannot disable it
 - `--output`
 
 By default, standalone mode uses the bundled light/dark Soda Music logos and subtitle icon. If you want to replace them, pass `--logo-path`, or pass both `--logo-light-path` and `--logo-dark-path` so the runner can pick the right one for the background. The selected caller-provided logo path must exist in the Manifest when `--asset-preflight required` is active.
 
 Do not use `--brand-text` as a logo replacement.
 
+Do not use `--no-include-disclaimer-subtitle` for deliverables. The runner keeps that option only so old commands do not fail, but production output must still include the right-bottom disclaimer.
+
 Do not use `assetStrategy=procedural`. The standalone runner only accepts real visual sources: generated, local video, local image, or scraped/direct video URL.
 
-If the user asks for a video without the backend, start from the standalone runner. If they ask to use the deployed API, keep using the remote script and references.
+For revisions, keep the first clean source and rerun composition from it. The final deliverable is only for review/delivery; it should not be used as a background for another render, because logos, subtitles, disclaimers, and animation layers would be baked in twice.
 
-## Remote Mode
-
-Use [references/api-contract.md](references/api-contract.md) for endpoint details and [references/payload-guide.md](references/payload-guide.md) for payload mapping.
-
-Remote mode cannot read local files on another user's machine unless those files are uploaded or otherwise reachable by the backend. For backend-free local production, prefer standalone mode plus the Manifest workflow above.
-
-For remote payloads, pass a real logo through `brandOverlay.logoPath` or `brandOverlay.logoUrl`, or pass `brandOverlay.logoLightPath` and `brandOverlay.logoDarkPath` for automatic brightness selection. Pass `voiceType` for one narration voice, or `voiceCandidates` for a selectable voice pool.
+Always start from the standalone runner. Local files are read from the current machine only, so keep assets under the workspace and run the Manifest workflow before rendering.
 
 ## Troubleshooting
 

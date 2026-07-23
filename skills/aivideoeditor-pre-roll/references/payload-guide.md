@@ -1,6 +1,6 @@
 # Payload Guide
 
-Map user-friendly requests to the remote pre-roll API body.
+Map user-friendly requests to the local pre-roll runner config.
 
 ## Copy
 
@@ -12,7 +12,7 @@ Avoid putting disclaimer text into `scriptText`; disclaimer text should be visua
 
 Reject or ask the user to rewrite copy that contains `红包` or `花不完`; these words must not appear in subtitles or voiceover.
 
-Use `voiceType` for one fixed voice. Use `voiceCandidates` when the caller wants voice variety; the backend can choose one candidate per task. The remote helper also accepts `--voice-type A|B|C` or `--voice-candidates A,B,C`.
+Use `voiceType` for one fixed voice. Use `voiceCandidates` when the caller wants voice variety; the runner can choose one candidate per task.
 
 ## Visual Type
 
@@ -47,6 +47,22 @@ Logo must come from a real caller-provided image or a real server-side logo asse
 
 Bright backgrounds should use the dark logo; dark backgrounds should use the light logo.
 
+The persistent top-left logo has fixed placement and size:
+
+```json
+{
+  "position": "top_left",
+  "width": 190,
+  "x": 40,
+  "y": 40,
+  "opacity": 1.0
+}
+```
+
+Do not set `brandOverlay.position`, `brandOverlay.widthRatio`, `brandOverlay.marginRatio`, or `brandOverlay.opacity` to vary the persistent logo. Do not set `brandOverlay.enabled=false` to remove it. Those fields are legacy compatibility inputs and should not affect deliverable pre-roll videos.
+
+Every deliverable must contain the top-left Soda Music logo. If a custom config tries to omit or disable it, override that before rendering; the runner will force it back on.
+
 ## Coin Materials
 
 For `金币音乐旧` / old balance screenshots, use big amounts over 10 yuan by default. If the copy mentions `下载汽水音乐之前`, `三毛`, `五毛`, `3毛`, `5毛`, `0.3`, `0.5`, or similar small-before-download wording, small amount screenshots are allowed.
@@ -60,7 +76,9 @@ For `金币音乐新` screenshots, use small amounts under 10 yuan. Coin arrival
 - `hybrid`: Try scraped source video and allow generated fallback if implemented by the server, but still provide scraped URLs yourself.
 - `generated_image`: Generate a still image and turn it into a video background.
 
-For standalone/local runs, local visual files should be paired with `assetRoot` and `assetManifest` so the caller can run the Manifest understanding gate first. The remote backend payload does not read a local manifest on another computer, so keep this as a standalone workflow detail unless the backend explicitly exposes manifest upload support.
+For revisions, choose the cleanest visual source from the previous result and submit that again. Prefer `revisionSourcePath`, `baseVideoPath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, `backgroundVideo`, `backgroundImage`, or the original source URL. Do not pass `finalVideoPath`/`final.mp4` back as `backgroundVideo`, because the final file already has baked-in subtitles, logos, disclaimer text, motion effects, audio mix, and overlays.
+
+For standalone/local runs, local visual files should be paired with `assetRoot` and `assetManifest` so the caller can run the Manifest understanding gate first.
 
 For `scraped`, include at least `scrapedVideoType` and one of:
 
@@ -79,6 +97,25 @@ Example:
   }
 }
 ```
+
+## Keyword Material Overlay
+
+When using `keywordMaterialOverlay`, ordinary materials should be composited below main subtitles and the visual-only disclaimer. That layer order is the default fix for caption blocking.
+
+Only enable spatial avoidance when the material should also stay physically away from the caption area:
+
+```json
+{
+  "keywordMaterialOverlay": {
+    "enabled": true,
+    "avoidSubtitleArea": false,
+    "subtitleSafePosition": "middle_center",
+    "subtitleGuardGapRatio": 0.035
+  }
+}
+```
+
+If subtitles are still hard to read because the background/material is visually busy, keep the same layer order and either add stronger subtitle outline/shadow, lower `widthRatio`/`heightRatio`, or set `avoidSubtitleArea:true`. Do not solve it by moving main subtitles to the edge.
 
 ## Subtitle
 
@@ -124,6 +161,8 @@ For standalone audio/subtitle sync, prefer the default automatic mode:
 If a specific generated voice still feels early or late, set `subtitleOffsetSeconds` manually. Positive values delay the main subtitle; negative values show it earlier. The small disclaimer stays visual-only and is not shifted.
 
 ## Disclaimer
+
+The bottom-right ad disclaimer is mandatory and visual-only. Keep `includeDisclaimerSubtitle: true`; if a caller sends `false` or an empty `disclaimerText`, force it back to the default before rendering.
 
 Default ad disclaimer:
 

@@ -1,70 +1,51 @@
 # Troubleshooting
 
-Use this guide for remote API users.
+Use this guide for the standalone local runner. The skill should not require any server connection, account login, user ID, auth token, queue, or external project.
 
-## Cannot Connect
+## Runner Does Not Start
 
 Check:
 
-- `baseUrl` is the server root, not a local project path.
-- The API path is `{baseUrl}/api/v1/pre-roll/tasks`.
-- Network, VPN, firewall, and HTTPS certificate settings.
-- `Authorization: Bearer ...` is present if the deployment requires it.
+- Python is available in the current IDE terminal.
+- `ffmpeg` and `ffprobe` are on PATH, or pass `--ffmpeg` and `--ffprobe`.
+- The command is run from the skill directory or uses absolute paths.
+- The output folder is writable.
 
-## 400 Response
+## Missing Real Video Content
 
-The body is usually missing one of:
+Deliverables cannot use placeholders. Provide one of:
 
-- `scriptText`
-- `promptText`
-- `copyTemplateType`
+- `--background-video`
+- `--background-image`
+- `--background-url`
+- `--asset-strategy generated` with `--ark-api-key`
 
-For simple use, send `scriptText`.
+If generated video is unavailable, use a clean local or scraped source video instead.
 
-## Auth Or Billing User Failure
+## Asset Manifest Problems
 
-If the task fails near `submit_seedance_video` with messages such as:
+When extra local visual materials are used, run `sync-assets`, inspect missing assets, fill `description` and `effective_region`, then run `validate`.
 
-- `current user is not linked to wecom user id`
-- `BillingUserNotLinked`
-- `userId="default"` or another placeholder user
+If validation fails, fix the Manifest before rendering. Do not bypass the Manifest for selected overlay/insert materials.
 
-Then the request used a non-real user. Real Seedance generation needs a backend user record with `wx_userid`.
+## Logo Or Disclaimer Missing
 
-Fix it by using one of these paths:
+Treat the render as invalid. Every deliverable must have:
 
-- Log in with `--login-account` and `--login-password`; the script will use the returned `user.id`.
-- Pass a valid `--auth-token`; the script can derive `userId` from a JWT `sub` or `user_id` claim.
-- Ask the backend owner to provision or link the account to a WeCom user ID.
+- fixed top-left Soda Music logo from a real bundled or caller-provided image
+- bottom-right visual-only disclaimer
 
-Do not retry real generation with `default`, `anonymous`, or `pre-roll-anon-*`; it will fail again at billing/Seedance.
+`--no-include-disclaimer-subtitle` is compatibility-only and should not remove the mandatory disclaimer.
 
-## Task Stays Pending
+## Duplicate Logo, Subtitle, Disclaimer, Or Effects
 
-The backend may not have a worker running. Ask the backend owner to check the `pre_roll` Celery queue and Redis.
+This usually means a revision used the previous `final.mp4` as the new background. Rerun from the clean source instead: `revisionSourcePath`, `baseVideoPath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, the original `backgroundVideo`/`backgroundImage`, or the original source URL.
 
-## Task Fails During Generated Video
-
-The server may be missing Seedance/Ark credentials or the external provider rejected the prompt. Try `assetStrategy: scraped` with explicit `scrapedVideoUrl` or `scrapedVideoUrls`, or ask the backend owner to inspect provider logs.
-
-## Task Fails During Generated Image
-
-The server may be missing image provider credentials. Try `assetStrategy: generated` or `scraped`, or ask the backend owner to inspect image provider settings.
-
-## Task Completes But No Downloadable URL
-
-Look for:
-
-- `resultData.outputs.finalVideoUrl`
-- `resultData.outputs.finalVideoObsUrl`
-- `resultData.outputs.obsUrl`
-- `resultData.outputs.finalVideoPath`
-
-If only `finalVideoPath` exists, the backend produced a local server file but did not expose/upload it. External users need a remote URL from the backend.
+Do not reprocess a file that already contains baked-in subtitles, top-left logo, subtitle-triggered icon, disclaimer text, BGM mix, or overlay/insert materials.
 
 ## Subtitle Problems
 
-If subtitles are missing, confirm `generateSubtitle: true`.
+If subtitles are missing, confirm the runner received `--script-text`.
 
 If subtitles overflow or touch the edge, adjust:
 
@@ -75,6 +56,6 @@ If subtitles overflow or touch the edge, adjust:
 
 Use `lower_center` for the main subtitle and `bottom_right` for the small disclaimer.
 
-If subtitles appear before the voice starts, standalone mode now detects leading silence automatically with `subtitleAudioSync: "auto"`. Check the output JSON under `steps.subtitleSync.offsetSeconds`.
+If subtitles appear before the voice starts, standalone mode detects leading silence automatically with `subtitleAudioSync: "auto"`. Check the output JSON under `steps.subtitleSync.offsetSeconds`.
 
 If subtitles still feel early or late for a specific voice, set `subtitleOffsetSeconds`, for example `0.25` to delay subtitles by 0.25 seconds or `-0.15` to show them earlier.

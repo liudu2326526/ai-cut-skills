@@ -13,6 +13,8 @@ Use local files the caller provides:
 - voiceover audio
 - fonts
 
+When revising a video, the local background source must be clean. Use the original background video/image or the runner's `baseVideoPath`/`revisionSourcePath`. Do not use a previous `final.mp4` or any local video that already has baked-in subtitles, logos, disclaimers, motion effects, audio mix, or overlays.
+
 ## Visual Safety
 
 Do not use:
@@ -36,6 +38,10 @@ If the background is bright, use the dark logo.
 If the background is dark, use the light logo.
 
 Use `--logo-path` for one logo. Use `--logo-light-path` plus `--logo-dark-path` when both variants are available.
+
+The persistent corner logo is always fixed at top-left: crop transparent padding, width 190px, x=40, y=40, opacity 1.0. This fixed rule does not apply to the larger subtitle-triggered Soda icon.
+
+Every deliverable must include that fixed top-left logo and the bottom-right visual-only disclaimer. The disclaimer does not need a source asset, but it must render clearly as white text with black outline by default.
 
 ## Fonts
 

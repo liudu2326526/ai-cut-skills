@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone pre-roll video runner.
 
-This script does not import the AIVideoEditor backend.  It can produce a local
+This script does not import the AIVideoEditor project. It can produce a local
 MP4 with FFmpeg, optional local TTS, optional Ark/Seedance video generation,
 safe-area subtitles, a visual-only disclaimer, and an optional caller-provided
 logo.
@@ -18,6 +18,7 @@ import platform
 import random
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,8 +26,14 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 from pre_roll_asset_manifest import (
     DEFAULT_MANIFEST_NAME as DEFAULT_ASSET_MANIFEST_NAME,
@@ -39,6 +46,10 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_MATERIAL_ROOT = SKILL_ROOT / "assets" / "汽水物料-新"
 DEFAULT_OUTPUT_DIR = Path.cwd() / "pre_roll_outputs"
 DEFAULT_DISCLAIMER = "本视频为广告创意\n具体奖励金额以实际情况为准"
+FIXED_BRAND_LOGO_WIDTH_PX = 190
+FIXED_BRAND_LOGO_X_PX = 40
+FIXED_BRAND_LOGO_Y_PX = 40
+FIXED_BRAND_LOGO_OPACITY = 1.0
 DEFAULT_BODY_FONT_NAME = "FZLanTingHeiS-DB1-GB"
 DEFAULT_BRAND_FONT_NAME = "Soda Font"
 DEFAULT_BRAND_SUBTITLE_COLOR = "&H0042FD3B"
@@ -496,6 +507,126 @@ def choose_logo_variant(
             "reason": "only light logo provided",
         }
     raise RunnerError("Missing logo material. Provide --logo-path, or --logo-light-path / --logo-dark-path.")
+
+
+def _crop_rgba_png_alpha_stdlib(source_path: Path, output_path: Path) -> Optional[Path]:
+    data = source_path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+
+    offset = 8
+    width = height = bit_depth = color_type = None
+    idat_parts: List[bytes] = []
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        chunk_type = data[offset + 4:offset + 8]
+        chunk_data = data[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+        elif chunk_type == b"IDAT":
+            idat_parts.append(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if width is None or height is None or bit_depth != 8 or color_type != 6 or not idat_parts:
+        return None
+
+    raw = zlib.decompress(b"".join(idat_parts))
+    bpp = 4
+    stride = width * bpp
+    rows: List[bytearray] = []
+    pos = 0
+    prev = bytearray(stride)
+    for _ in range(height):
+        filter_type = raw[pos]
+        pos += 1
+        row = bytearray(raw[pos:pos + stride])
+        pos += stride
+        for index in range(stride):
+            left = row[index - bpp] if index >= bpp else 0
+            up = prev[index]
+            up_left = prev[index - bpp] if index >= bpp else 0
+            if filter_type == 1:
+                row[index] = (row[index] + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (row[index] + up) & 0xFF
+            elif filter_type == 3:
+                row[index] = (row[index] + ((left + up) >> 1)) & 0xFF
+            elif filter_type == 4:
+                p = left + up - up_left
+                pa = abs(p - left)
+                pb = abs(p - up)
+                pc = abs(p - up_left)
+                predictor = left if pa <= pb and pa <= pc else up if pb <= pc else up_left
+                row[index] = (row[index] + predictor) & 0xFF
+            elif filter_type != 0:
+                return None
+        rows.append(row)
+        prev = row
+
+    min_x, min_y, max_x, max_y = width, height, -1, -1
+    for y, row in enumerate(rows):
+        for x in range(width):
+            if row[x * bpp + 3] > 0:
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+    if max_x < min_x or max_y < min_y:
+        return None
+
+    cropped_width = max_x - min_x + 1
+    cropped_height = max_y - min_y + 1
+    cropped = bytearray()
+    for y in range(min_y, max_y + 1):
+        cropped.append(0)
+        row = rows[y]
+        cropped.extend(row[min_x * bpp:(max_x + 1) * bpp])
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", cropped_width, cropped_height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(cropped), 9))
+        + chunk(b"IEND", b"")
+    )
+    return output_path
+
+
+def prepare_brand_logo_overlay_asset(source_path: Path, work_dir: Path) -> Path:
+    """Crop transparent padding so the fixed width is applied to the real logo."""
+    if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return source_path
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    output_path = work_dir / f"{source_path.stem}_cropped.png"
+    if Image is None:
+        try:
+            return _crop_rgba_png_alpha_stdlib(source_path, output_path) or source_path
+        except Exception as exc:
+            print(f"[brand-logo] stdlib crop failed, using original asset: {exc}", file=sys.stderr)
+            return source_path
+
+    try:
+        with Image.open(source_path) as opened:
+            image = opened.convert("RGBA")
+            bbox = image.getchannel("A").getbbox()
+            if bbox:
+                image = image.crop(bbox)
+            image.save(output_path)
+        return output_path
+    except Exception as exc:
+        print(f"[brand-logo] crop failed, using original asset: {exc}", file=sys.stderr)
+        return source_path
 
 
 def output_size(resolution: str, ratio: str) -> Tuple[int, int]:
@@ -1521,6 +1652,7 @@ def compose_final(
     duration: float,
     width: int,
     height: int,
+    work_dir: Path,
 ) -> Dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     subtitle_filter = f"subtitles='{escape_filter_path(ass_path)}'"
@@ -1533,18 +1665,27 @@ def compose_final(
     if logo_path:
         if not logo_path.exists():
             raise RunnerError(f"Logo path not found: {logo_path}")
-        command.extend(["-loop", "1", "-i", str(logo_path)])
-        logo_width = max(96, int(width * 0.20))
-        margin = max(20, int(width * 0.035))
+        prepared_logo_path = prepare_brand_logo_overlay_asset(logo_path, work_dir / "brand_overlay")
+        command.extend(["-loop", "1", "-i", str(prepared_logo_path)])
+        logo_x = min(FIXED_BRAND_LOGO_X_PX, max(0, width - 1))
+        logo_y = min(FIXED_BRAND_LOGO_Y_PX, max(0, height - 1))
+        logo_width = min(FIXED_BRAND_LOGO_WIDTH_PX, max(1, width - logo_x))
         filter_parts.append(f"[2:v]scale={logo_width}:-1,format=rgba[logo]")
-        filter_parts.append(f"[captioned][logo]overlay=x={margin}:y={margin}:format=auto[vout]")
+        filter_parts.append(
+            f"[logo]colorchannelmixer=aa={FIXED_BRAND_LOGO_OPACITY:.3f}[brand_logo];"
+            f"[captioned][brand_logo]overlay=x={logo_x}:y={logo_y}:format=auto[vout]"
+        )
         map_video = "[vout]"
         logo_detail = {
             "enabled": True,
             "path": str(logo_path),
+            "preparedPath": str(prepared_logo_path),
+            "position": "top_left",
+            "sizePolicy": "fixed",
             "width": logo_width,
-            "x": margin,
-            "y": margin,
+            "x": logo_x,
+            "y": logo_y,
+            "opacity": FIXED_BRAND_LOGO_OPACITY,
         }
 
     filter_parts.append("[1:a]aformat=sample_rates=44100:channel_layouts=stereo[aout]")
@@ -1614,7 +1755,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-text", default=None, help="Custom visual prompt for AI video generation.")
     parser.add_argument("--visual-template-id", default="decompression")
     parser.add_argument("--asset-strategy", default="generated", choices=("generated", "local_video", "local_image", "scraped"))
-    parser.add_argument("--background-video", default=None, help="Local background MP4/MOV. Preferred for backend-free real production.")
+    parser.add_argument("--background-video", default=None, help="Local background MP4/MOV. Preferred for local production.")
     parser.add_argument("--background-image", default=None, help="Local background image. It will be converted to a video background.")
     parser.add_argument("--background-url", default=None, help="Direct downloadable video URL. Used for scraped/simple remote source mode.")
     parser.add_argument("--scraped-video-url", default=None, help="Alias of --background-url for compatibility with the API payload.")
@@ -1644,7 +1785,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--body-font-path", default=None, help="方正兰亭 font file path.")
     parser.add_argument("--brand-font-path", default=None, help="SodaFont font file path.")
     parser.add_argument("--include-disclaimer-subtitle", action="store_true", default=True)
-    parser.add_argument("--no-include-disclaimer-subtitle", dest="include_disclaimer_subtitle", action="store_false")
+    parser.add_argument(
+        "--no-include-disclaimer-subtitle",
+        dest="include_disclaimer_subtitle",
+        action="store_false",
+        help="Compatibility only; deliverable renders still force the bottom-right disclaimer.",
+    )
     parser.add_argument("--disclaimer-text", default=DEFAULT_DISCLAIMER)
     parser.add_argument("--disclaimer-config-json", default=None)
     parser.add_argument("--brand-text", default="", help="Optional extra top-left text. Do not use it as a logo replacement.")
@@ -1809,8 +1955,16 @@ def main() -> int:
     if not script_text:
         raise RunnerError("Missing --script-text")
     validate_copy_text(script_text, "scriptText")
-    if args.include_disclaimer_subtitle:
-        validate_copy_text(str(args.disclaimer_text or ""), "disclaimerText")
+    # 警示语是交付规范，旧参数可以传进来，但不能真的关闭。
+    if args.include_disclaimer_subtitle is False:
+        print(
+            "[pre-roll] --no-include-disclaimer-subtitle is ignored; "
+            "the bottom-right disclaimer is required.",
+            file=sys.stderr,
+        )
+    args.include_disclaimer_subtitle = True
+    args.disclaimer_text = str(args.disclaimer_text or DEFAULT_DISCLAIMER).strip() or DEFAULT_DISCLAIMER
+    validate_copy_text(str(args.disclaimer_text or ""), "disclaimerText")
 
     run_id = uuid.uuid4().hex[:12]
     output_path = Path(args.output).expanduser() if args.output else DEFAULT_OUTPUT_DIR / run_id / "final.mp4"
@@ -2028,6 +2182,10 @@ def main() -> int:
         "visualPrompt": visual_prompt,
         "assetStrategy": args.asset_strategy,
         "realVideoContentRequired": True,
+        "revisionSourcePolicy": (
+            "For revisions, rerender from a clean source such as baseVideoPath/revisionSourcePath "
+            "or the original background. Do not use finalVideoPath/final.mp4 as the next input."
+        ),
         "hasRealVideoSource": bool(
             background_video
             or background_image
@@ -2049,12 +2207,26 @@ def main() -> int:
         "subtitleMaxAutoOffsetSeconds": subtitle_max_auto_offset_seconds,
         "includeDisclaimerSubtitle": args.include_disclaimer_subtitle,
         "disclaimerText": args.disclaimer_text if args.include_disclaimer_subtitle else None,
+        "mandatoryDisclaimer": {
+            "enabled": True,
+            "position": "bottom_right",
+            "canDisable": False,
+        },
         "disclaimerConfig": disclaimer_config,
         "brandText": args.brand_text,
         "logoPath": str(direct_logo_path) if direct_logo_path else None,
         "logoLightPath": str(logo_light_path) if logo_light_path else None,
         "logoDarkPath": str(logo_dark_path) if logo_dark_path else None,
         "logoLumaThreshold": float(args.logo_luma_threshold),
+        "fixedTopLeftBrandLogo": {
+            "enabled": True,
+            "position": "top_left",
+            "width": FIXED_BRAND_LOGO_WIDTH_PX,
+            "x": FIXED_BRAND_LOGO_X_PX,
+            "y": FIXED_BRAND_LOGO_Y_PX,
+            "opacity": FIXED_BRAND_LOGO_OPACITY,
+            "sizePolicy": "fixed_pixels",
+        },
         "subtitleBrandLogoOverlay": {
             "enabled": bool(args.subtitle_logo_enabled),
             "terms": subtitle_logo_terms,
@@ -2123,6 +2295,18 @@ def main() -> int:
         output_path=base_video,
         work_dir=work_dir,
     )
+    clean_source_detail = {
+        "revisionSourcePath": str(base_video),
+        "baseVideoPath": str(base_video),
+        "originalVisualPath": base_detail.get("path"),
+        "originalVisualType": base_detail.get("type"),
+        "generatedVideoPath": str(ark_result.get("path")) if ark_result and ark_result.get("path") else None,
+        "scrapedVideoPath": str(base_detail.get("path")) if args.asset_strategy == "scraped" else None,
+        "rule": (
+            "Use revisionSourcePath/baseVideoPath or the original clean visual source for revisions; "
+            "do not reprocess finalVideoPath because final outputs already contain baked-in overlays."
+        ),
+    }
     logo_selection = choose_logo_variant(
         ffmpeg_bin=ffmpeg_bin,
         base_video=base_video,
@@ -2177,6 +2361,7 @@ def main() -> int:
         duration=final_duration,
         width=width,
         height=height,
+        work_dir=work_dir,
     )
     subtitle_brand_logo_detail = apply_subtitle_brand_logo_overlays(
         ffmpeg_bin=ffmpeg_bin,
@@ -2210,6 +2395,12 @@ def main() -> int:
         "logoSelection": logo_selection,
         "outputs": {
             "finalVideoPath": str(output_path),
+            "revisionSourcePath": str(base_video),
+            "baseVideoPath": str(base_video),
+            "originalVisualPath": clean_source_detail["originalVisualPath"],
+            "originalVisualType": clean_source_detail["originalVisualType"],
+            "generatedVideoPath": clean_source_detail["generatedVideoPath"],
+            "scrapedVideoPath": clean_source_detail["scrapedVideoPath"],
             "coverPath": cover,
             "subtitlePath": str(ass_path),
             "fontsDir": str(prepared_fonts_dir) if prepared_fonts_dir else None,
@@ -2218,6 +2409,7 @@ def main() -> int:
         "steps": {
             "arkGeneration": ark_result,
             "background": base_detail,
+            "cleanRevisionSource": clean_source_detail,
             "logoSelection": logo_selection,
             "audio": audio_detail,
             "subtitleSync": subtitle_sync_detail,
