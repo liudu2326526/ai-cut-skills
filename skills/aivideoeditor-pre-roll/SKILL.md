@@ -17,7 +17,9 @@ Material assets should come from the caller's current project/workspace first. D
 - Deliverable videos must have real visual content. Do not use color blocks, procedural test animations, blank clips, or other placeholder footage as the main video.
 - When revising an unsatisfactory video, always restart from a clean/uncomposited source video such as `baseVideoPath`, `revisionSourcePath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, `backgroundVideo`, or `backgroundImage`. Do not use `finalVideoPath`, `final.mp4`, or any clip that already contains subtitles, logos, disclaimers, motion effects, BGM mixing, or overlays as the next input.
 - Copy/subtitles must not contain `红包` or `花不完`; do not send those words to voiceover.
+- Generated voiceover must use Edge Neural TTS. Do not use Windows SAPI, local system voices, silent fallback, or robotic/default voices. Use lively Chinese Edge voices such as `zh-CN-XiaoyiNeural`, `zh-CN-XiaoxiaoNeural`, `zh-CN-YunxiNeural`, `zh-CN-YunxiaNeural`, `zh-CN-liaoning-XiaobeiNeural`, and `zh-CN-shaanxi-XiaoniNeural`. If Edge TTS is unavailable, fail and ask for `edge-tts` installation or an approved lively `--voiceover-path`.
 - Main voiceover and main subtitles must use the exact same cleaned `scriptText`. Do not rebuild subtitle text from TTS/provider frontend text; only use provider timestamps to align timing. The visual-only disclaimer is separate and must not be spoken.
+- Main subtitles must be rendered exactly once. Use the default `--subtitle-render-mode burn` only when no animated subtitle layer will be applied. When using `subtitle-motion-effects` or any external animated subtitle layer, run this pre-roll runner with `--subtitle-render-mode motion`; this suppresses the original ASS main subtitles while preserving timing data and the mandatory bottom-right disclaimer.
 - Main subtitles must render `汽水音乐` and `汽水` with SodaFont, brand green `#3BFD42`, black outline, and a slightly larger scale by default. Other main subtitle text should use 方正兰亭.
 - The visual-only disclaimer defaults to clear white `Microsoft YaHei` with a black outline. Do not apply subtitle motion effects to the disclaimer.
 - When main subtitles contain `汽水音乐` or `汽水`, keep the normal subtitle font rule and additionally place a real logo/icon above that subtitle line.
@@ -127,8 +129,8 @@ Standalone mode can:
 - optionally place a second logo/icon above subtitle lines that contain `汽水音乐` or `汽水`
 - choose `dark` or `light` logo automatically from the rendered background's overall brightness
 - validate local visual assets against `pre_roll_assets_manifest.json`
-- let you vary narration voices with `--voice-name`; you can pass multiple candidates separated by `|`; when local TTS is enabled and no voice is specified, the runner samples an installed Chinese Windows SAPI voice when available
-- compact long silent pauses in the voiceover audio as a required pass instead of speeding up the whole narration; if pause compaction fails, do not deliver a video with the raw paused voiceover
+- generate narration through Edge Neural TTS only; use `--edge-voice` or `--voice-name` with `|` separated candidates to vary voices. Friendly aliases such as `Xiaoyi`, `Xiaoxiao`, `Yunxi`, `晓伊`, `晓晓`, and `云希` are mapped to the proper Edge voice ids. `--tts-engine sapi`, `--tts-engine silent`, and `--local-tts` are not allowed for generated pre-roll voiceover
+- compact long silent pauses in the voiceover audio as a required pass instead of speeding up the whole narration; use multi-threshold pause detection, keep a short natural pause, and fail rather than delivering raw paused voiceover when compaction fails
 - keep preview/result JSON fields `voiceoverText` and `subtitleText` identical for the main spoken copy
 - render brand words with SodaFont and normal main subtitle text with 方正兰亭
 - block forbidden copy terms before voiceover/subtitle generation
@@ -144,14 +146,16 @@ Recommended inputs:
 - `--asset-root` and `--asset-manifest` when extra local visual files are used
 - `--asset-preflight required` for production renders; dry-run will return the preflight report without stopping
 - `--material-selection-json` when the caller has chosen insert/overlay materials that need semantic gate checks
-- `--voiceover-path` or `--local-tts`
+- `--voiceover-path`, or default Edge Neural TTS through `--tts-engine edge`
 - `--logo-path`, or `--logo-light-path` plus `--logo-dark-path`
 - `--subtitle-logo-path` when you want a specific real icon above subtitles that contain `汽水音乐` or `汽水`
 - `--no-bundled-assets` only as a compatibility/debug option; normal renders should first find project/workspace material paths and pass them explicitly
 - `--no-subtitle-logo-enabled` to disable that subtitle-triggered logo layer
 - `--fonts-dir`, or `--body-font-path` plus `--brand-font-path`
-- `--voice-name` if you want one voice or a small voice pool, for example `VoiceA|VoiceB`
+- `--edge-voice` or `--voice-name` if you want one lively voice or a small voice pool, for example `zh-CN-XiaoyiNeural|zh-CN-XiaoxiaoNeural|zh-CN-YunxiNeural`; default Edge settings use `--edge-rate +12%` and `--edge-pitch +3Hz`
 - `--subtitle-position`
+- `--subtitle-render-mode burn` for normal built-in subtitles, or `--subtitle-render-mode motion` before applying `subtitle-motion-effects`; never overlay animated subtitles onto a video whose pre-roll JSON says `mainSubtitleBurned: true`
+- `--duration` only when the user explicitly wants a specific length. When omitted, the runner keeps the visual base short, defaulting to 8 seconds and staying within 10 seconds; longer narration extends the clean base during composition so the voiceover and subtitles remain complete.
 - `--brand-primary-color`, `--brand-outline-color`, and `--brand-font-scale` when overriding the Soda Music word highlight
 - `--subtitle-audio-sync auto`
 - `--subtitle-offset-seconds 0.2` when a specific voice still feels early or late

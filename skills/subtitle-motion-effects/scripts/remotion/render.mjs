@@ -775,6 +775,44 @@ const normalizeEffect = (raw = {}, cueDuration, index) => {
   return effect;
 };
 
+const readJsonIfExists = (jsonPath) => {
+  if (!fs.existsSync(jsonPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  } catch (error) {
+    throw new SubtitleMotionError(`Cannot read input sidecar JSON: ${jsonPath}: ${error.message}`);
+  }
+};
+
+const hasBurnedMainSubtitles = (value) => {
+  if (!value || typeof value !== 'object') return false;
+  if (value.mainSubtitleBurned === true) return true;
+  if (value.subtitleRenderMode === 'burn') return true;
+  if (value.subtitle && value.subtitle.mainSubtitleBurned === true) return true;
+  if (value.steps && value.steps.subtitle && value.steps.subtitle.mainSubtitleBurned === true) return true;
+  if (value.result && hasBurnedMainSubtitles(value.result)) return true;
+  return false;
+};
+
+const assertInputDoesNotAlreadyBurnMainSubtitles = (inputPath) => {
+  const parsed = path.parse(inputPath);
+  const candidates = [
+    path.join(parsed.dir, `${parsed.name}.json`),
+    path.join(parsed.dir, `${parsed.name}.pre-roll.json`),
+    path.join(parsed.dir, 'result.json'),
+  ];
+  for (const jsonPath of candidates) {
+    const report = readJsonIfExists(jsonPath);
+    if (!report) continue;
+    if (hasBurnedMainSubtitles(report)) {
+      throw new SubtitleMotionError(
+        `Input already has burned main subtitles according to ${jsonPath}. ` +
+        'Regenerate the pre-roll base with --subtitle-render-mode motion before applying subtitle-motion-effects.',
+      );
+    }
+  }
+};
+
 const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
   if (!fs.existsSync(timelinePath)) throw new SubtitleMotionError(`Timeline not found: ${timelinePath}`);
   const raw = JSON.parse(fs.readFileSync(timelinePath, 'utf8'));
@@ -796,6 +834,7 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
     if (inputSummary.width <= 0 || inputSummary.height <= 0 || inputSummary.duration <= 0) {
       throw new SubtitleMotionError(`Input has no readable video stream: ${inputPath}`);
     }
+    assertInputDoesNotAlreadyBurnMainSubtitles(inputPath);
   }
 
   const fonts = (Array.isArray(raw.fonts) ? raw.fonts : []).map((font, index) => {
