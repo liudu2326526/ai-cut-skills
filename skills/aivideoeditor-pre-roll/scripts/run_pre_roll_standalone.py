@@ -64,8 +64,12 @@ VISUAL_COMMON_NEGATIVE = (
     "不要出现任何文字、字幕、Logo、水印（包括 AI 生成水印）、品牌、UI 界面、按钮、二维码、"
     "清晰真人脸、真人露脸、擦边、纹身、知名 IP、影视剧、车牌、涉军涉政、箭头图标等元素。"
 )
+VOICEOVER_SILENCE_THRESHOLD_DB = -45.0
+VOICEOVER_MIN_SILENCE_SECONDS = 0.28
+VOICEOVER_KEEP_SILENCE_SECONDS = 0.08
 
 TERMINAL_ARK_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 
 VISUAL_SCENES: Dict[str, List[str]] = {
     "decompression": [
@@ -81,6 +85,14 @@ VISUAL_SCENES: Dict[str, List[str]] = {
         "沙画流动",
         "齿轮机械循环运动",
         "滚珠迷宫缓慢滚动",
+    ],
+    "animal_grooming": [
+        "宠物修毛时毛发被整齐修剪的特写",
+        "长毛动物被梳毛后毛发顺滑掉落",
+        "宠物剃毛机沿着毛发表面缓慢推进",
+        "羊毛修剪时大片毛毡自然剥离",
+        "马蹄修剪时边缘被仔细削平",
+        "动物脚底毛被小心修剪干净",
     ],
     "scenery": [
         "清晨山谷云雾缓慢流动",
@@ -101,20 +113,23 @@ VISUAL_SCENES: Dict[str, List[str]] = {
         "锦鲤穿过金色水纹，旁边出现通用领取卡片",
         "红金灯笼和金币雨形成发财氛围背景",
     ],
-    "pet_funny": [
-        "可爱猫咪看向通用奖励弹窗，画面轻松干净",
-        "小狗歪头看着金币增长浮层",
-        "宠物坐在沙发上听到提示音后做出好奇反应",
+    "mythic_fortune": [
+        "金孔雀展开华丽羽屏，周围有金币光效和红金祥云",
+        "金凤凰从红金云雾中展开翅膀，画面中心有通用福利卡片",
+        "金龙穿过祥云和金币雨，红金国风背景喜庆明亮",
+        "金孔雀与金凤凰同框，羽毛和金币光效形成发财氛围",
     ],
-    "ai_lifestyle": [
-        "成年用户在明亮客厅里戴耳机听音乐，只拍背影或手部局部，画面自然干净",
-        "成年用户在通勤路上轻松听音乐，只拍侧影或局部，旁边有通用福利卡片",
-        "成年用户在办公室休息区听歌放松，不露清晰正脸，画面明亮自然",
+    "pet_funny": [
+        "可爱猫咪突然探头看向镜头，画面轻松干净",
+        "小狗歪头做出疑惑表情，画面有趣但不杂乱",
+        "猫咪钻进纸袋后探出头，动作可爱自然",
+        "宠物坐在沙发上做出好奇反应",
+        "小狗追逐泡泡后停下看向镜头，画面轻松有趣",
     ],
     "ai_beauty_image": [
-        "成年女性在明亮咖啡店戴耳机听音乐，只拍背影或侧影，生活方式广告感",
-        "成年女性在居家客厅戴耳机听歌，不露清晰正脸，画面温暖干净",
-        "成年女性在阳光窗边听音乐，只拍手部和半身侧影，旁边有轻量福利浮层",
+        "成年女性正面自然看向镜头，明亮干净的福利海报风，旁边有通用金币增长浮层",
+        "成年女性半身正面微笑，背景是简洁浅色空间和通用奖励卡片",
+        "成年女性在阳光窗边拿着水杯正面出镜，旁边有轻量福利提示浮层",
     ],
 }
 
@@ -124,6 +139,13 @@ VISUAL_PROMPTS: Dict[str, str] = {
         "场景：{scene}。要求画面主体居中，特写镜头，光线柔和，细节丰富，动作连续自然，"
         "节奏舒缓。画面干净简洁，无人物对镜讲话，无剧情，无剧烈切换，不出现文字、字幕、"
         "Logo、水印、品牌、UI、按钮、二维码、金币、现金奖励提示、到账、App 页面等元素，方便后期叠加字幕和配音。"
+        + VISUAL_COMMON_NEGATIVE
+    ),
+    "animal_grooming": (
+        "生成一段适合短视频前贴背景的动物修毛解压视频。场景：{scene}。镜头以局部特写为主，"
+        "动作连续舒缓，能看到毛发、梳理、修剪或蹄甲修整带来的解压质感。"
+        "不要出现人物口播、讲解、对口型、危险虐待动作、血腥画面、品牌、Logo、水印、字幕、"
+        "App 页面、UI 按钮、二维码、金币、现金奖励提示或到账元素。"
         + VISUAL_COMMON_NEGATIVE
     ),
     "scenery": (
@@ -142,20 +164,22 @@ VISUAL_PROMPTS: Dict[str, str] = {
         "可以出现通用福利卡片和进度元素，但不要出现具体品牌页面、二维码、手机号、银行卡号、Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
-    "pet_funny": (
-        "生成一段轻松趣味的萌宠短视频背景。场景：{scene}。画面可爱、干净、节奏轻松，"
+    "mythic_fortune": (
+        "生成一段短视频前贴的红金神兽发财背景。场景：{scene}。画面重点是金孔雀、金凤凰、金龙、祥云、"
+        "元宝、金币、红金光效等元素，整体喜庆、贵气、明亮，有福利感和财富增长感。"
         "不要出现人物口播、讲解、对口型、二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
-    "ai_lifestyle": (
-        "生成一段短视频广告风格的生活方式背景。场景：{scene}。成年人物只用背影、侧影、手部或生活局部出镜，动作轻微，"
-        "不露清晰正脸，不讲话、不讲解、不对口型，不展示具体手机品牌界面，不出现二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
+    "pet_funny": (
+        "生成一段轻松趣味的萌宠短视频背景。场景：{scene}。画面可爱、干净、节奏轻松，"
+        "不要出现人物口播、讲解、对口型、音乐卡片、金币增长浮层、领取按钮、App 页面、二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
     "ai_beauty_image": (
-        "生成一段适合前贴底片的生活方式画面。场景：{scene}。人物必须是成年女性，只拍背影、侧影、手部或生活局部，"
-        "不露清晰正脸，日常得体穿着，不暴露、不性感化，不直播、不带货、不对口型，不出现二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
-        + VISUAL_COMMON_NEGATIVE
+        "生成一张静态 AI 福利海报图片，不要生成视频镜头感。场景：{scene}。人物必须是成年女性，可以正脸或半身正面出镜，"
+        "表情自然友好，穿着日常得体，不暴露、不性感化。人物不要戴耳机、不要表现听歌动作，"
+        "不直播、不带货、不讲解、不对口型，不出现二维码、手机号、银行卡号、明星脸、真实可识别人物、具体品牌 Logo 或水印。"
+        + VISUAL_COMMON_NEGATIVE.replace("清晰真人脸、真人露脸、", "")
     ),
 }
 
@@ -281,6 +305,82 @@ def ffprobe_duration(ffprobe_bin: str, path: Path) -> Optional[float]:
         return float(result.stdout.strip())
     except ValueError:
         return None
+
+
+def compact_audio_silence(
+    *,
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    input_path: Path,
+    output_path: Path,
+) -> Dict[str, Any]:
+    raw_duration = ffprobe_duration(ffprobe_bin, input_path) or 0.0
+    if not input_path.exists() or raw_duration <= 0:
+        return {
+            "applied": False,
+            "inputPath": str(input_path),
+            "outputPath": str(input_path),
+            "rawDuration": raw_duration or None,
+            "duration": raw_duration or None,
+            "reason": "voiceover file missing or duration invalid",
+        }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    filter_chain = (
+        "silenceremove="
+        f"start_periods=1:start_duration=0.05:start_threshold={VOICEOVER_SILENCE_THRESHOLD_DB:.1f}dB:"
+        f"stop_periods=-1:stop_duration={VOICEOVER_MIN_SILENCE_SECONDS:.3f}:"
+        f"stop_threshold={VOICEOVER_SILENCE_THRESHOLD_DB:.1f}dB:stop_silence={VOICEOVER_KEEP_SILENCE_SECONDS:.3f},"
+        "aformat=sample_rates=44100:channel_layouts=stereo"
+    )
+    command = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+        "-af",
+        filter_chain,
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+    try:
+        run(command, label="remove-voiceover-silence")
+    except RunnerError as exc:
+        raise RunnerError(f"Voiceover silence removal is required but failed: {exc}") from exc
+
+    compact_duration = ffprobe_duration(ffprobe_bin, output_path) or 0.0
+    if compact_duration <= 0:
+        raise RunnerError("Voiceover silence removal is required but produced invalid audio")
+
+    if compact_duration >= raw_duration - 0.05:
+        shutil.copy2(input_path, output_path)
+        return {
+            "applied": False,
+            "required": True,
+            "processed": True,
+            "inputPath": str(input_path),
+            "outputPath": str(output_path),
+            "rawDuration": round(raw_duration, 3),
+            "duration": round(raw_duration, 3),
+            "reason": "required silence-removal pass completed; no long pause detected",
+        }
+
+    return {
+        "applied": True,
+        "required": True,
+        "processed": True,
+        "inputPath": str(input_path),
+        "outputPath": str(output_path),
+        "rawDuration": round(raw_duration, 3),
+        "duration": round(compact_duration, 3),
+        "removedSeconds": round(max(0.0, raw_duration - compact_duration), 3),
+        "thresholdDb": VOICEOVER_SILENCE_THRESHOLD_DB,
+        "minSilenceSeconds": VOICEOVER_MIN_SILENCE_SECONDS,
+        "keptSilenceSeconds": VOICEOVER_KEEP_SILENCE_SECONDS,
+        "reason": "removed long voiceover pauses",
+    }
 
 
 def clamp_subtitle_offset(offset: float, duration: float, max_auto_offset: float) -> float:
@@ -659,14 +759,29 @@ def normalize_visual_type(value: Optional[str]) -> str:
     aliases = {
         "解压": "decompression",
         "解压类": "decompression",
+        "动物修毛": "animal_grooming",
+        "宠物修毛": "animal_grooming",
+        "修毛": "animal_grooming",
+        "剃毛": "animal_grooming",
+        "马蹄修剪": "animal_grooming",
+        "蹄甲修剪": "animal_grooming",
         "风景": "scenery",
         "金币": "gold_reward",
         "金币类型": "gold_reward",
         "发财": "chinese_fortune",
         "国风": "chinese_fortune",
+        "金孔雀": "mythic_fortune",
+        "孔雀": "mythic_fortune",
+        "凤凰": "mythic_fortune",
+        "金龙": "mythic_fortune",
+        "神兽": "mythic_fortune",
         "宠物": "pet_funny",
+        "萌宠": "pet_funny",
         "美女": "ai_beauty_image",
-        "生活": "ai_lifestyle",
+        "生活": "gold_reward",
+        "人物": "gold_reward",
+        "听歌": "gold_reward",
+        "ai_lifestyle": "gold_reward",
     }
     normalized = str(value or "decompression").strip()
     return aliases.get(normalized, normalized if normalized in VISUAL_SCENES else "decompression")
@@ -682,11 +797,17 @@ def choose_scene(visual_type: str, seed: Optional[str]) -> str:
 
 
 def build_visual_prompt(visual_type: str, scene: str, override: Optional[str]) -> str:
+    safety_text = (
+        VISUAL_COMMON_NEGATIVE.replace("清晰真人脸、真人露脸、", "")
+        if visual_type == "ai_beauty_image"
+        else VISUAL_COMMON_NEGATIVE
+    )
+
     def with_safety(prompt: str) -> str:
         prompt = str(prompt or "").strip()
-        if not prompt or VISUAL_COMMON_NEGATIVE in prompt:
+        if not prompt or safety_text in prompt:
             return prompt
-        return f"{prompt}{VISUAL_COMMON_NEGATIVE}"
+        return f"{prompt}{safety_text}"
 
     if override:
         return with_safety(override)
@@ -951,6 +1072,9 @@ def generate_ass(
     return {
         "path": str(output_path),
         "events": events,
+        "subtitleText": text,
+        "voiceoverText": text,
+        "exactTextPolicy": "main subtitles use the same scriptText sent to local/provided voiceover preparation",
         "position": pos["position"],
         "fontName": font_name,
         "brandFontName": brand_font_name,
@@ -1103,10 +1227,62 @@ def prepare_fonts_dir(
     return output_dir
 
 
-def choose_voice_name(voice_name: Optional[str], seed: Optional[str] = None) -> Optional[str]:
-    if not voice_name:
-        return None
-    candidates = [part.strip() for part in str(voice_name).split("|") if part.strip()]
+def list_local_sapi_voice_names() -> List[str]:
+    if platform.system().lower() != "windows":
+        return []
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        return []
+    script = (
+        "$OutputEncoding=[System.Text.Encoding]::UTF8;"
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+        "Add-Type -AssemblyName System.Speech;"
+        "$synth=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+        "try {"
+        "  $synth.GetInstalledVoices() | ForEach-Object {"
+        "    Write-Output ($_.VoiceInfo.Name + \"`t\" + $_.VoiceInfo.Culture.Name)"
+        "  }"
+        "} finally { $synth.Dispose() }"
+    )
+    encoded_command = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_command],
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    all_voices: List[str] = []
+    chinese_voices: List[str] = []
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        name, _, culture = line.partition("\t")
+        clean_name = name.strip()
+        if not clean_name:
+            continue
+        all_voices.append(clean_name)
+        if culture.strip().lower().startswith("zh"):
+            chinese_voices.append(clean_name)
+    return list(dict.fromkeys(chinese_voices or all_voices))
+
+
+def choose_voice_name(
+    voice_name: Optional[str],
+    seed: Optional[str] = None,
+    *,
+    use_installed_defaults: bool = False,
+) -> Optional[str]:
+    candidates = [part.strip() for part in str(voice_name or "").split("|") if part.strip()]
+    if not candidates and use_installed_defaults:
+        # 没传 voice-name 时，尽量从本机已安装中文语音里随机挑一个，让批量视频别总是一个声音。
+        candidates = list_local_sapi_voice_names()
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -1126,6 +1302,174 @@ def download_url(url: str, destination: Path, timeout: int = 300) -> Path:
     if not destination.exists() or destination.stat().st_size <= 0:
         raise RunnerError(f"Downloaded file is empty: {destination}")
     return destination
+
+
+def clean_image_base_url(base_url: Optional[str]) -> str:
+    cleaned = (base_url or "https://api.openai.com").rstrip("/")
+    if cleaned.endswith("/v1"):
+        return cleaned[:-3]
+    return cleaned
+
+
+def infer_image_provider(base_url: str, model: str) -> str:
+    text = f"{base_url} {model}".lower()
+    if "volces.com" in text or "ark" in text or model.startswith("doubao-seedream"):
+        return "volcengine"
+    return "openai"
+
+
+def image_generation_url(base_url: str, provider: str) -> str:
+    if provider == "volcengine":
+        return f"{base_url}/images/generations"
+    return f"{base_url}/v1/images/generations"
+
+
+def image_request_json(
+    method: str,
+    url: str,
+    api_key: str,
+    body: Optional[Dict[str, Any]] = None,
+    *,
+    timeout: int = 240,
+) -> Dict[str, Any]:
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "AIVideoEditor-PreRoll-Standalone/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else {}
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        raise RunnerError(f"Image API error HTTP {exc.code}: {text}") from exc
+    except urllib.error.URLError as exc:
+        raise RunnerError(f"Image API request failed: {exc}") from exc
+
+
+def extract_image_ref(payload: Dict[str, Any]) -> Optional[str]:
+    item = (payload.get("data") or [{}])[0]
+    image_ref = item.get("b64_json") or item.get("b64") or item.get("url")
+    if isinstance(image_ref, list):
+        image_ref = image_ref[0] if image_ref else None
+    return str(image_ref).strip() if image_ref else None
+
+
+def extract_provider_task_id(payload: Dict[str, Any]) -> Optional[str]:
+    item = (payload.get("data") or [{}])[0]
+    task_id = item.get("task_id") or item.get("taskId")
+    return str(task_id).strip() if task_id else None
+
+
+def extract_async_task_image_url(task_data: Dict[str, Any]) -> Optional[str]:
+    images = ((task_data.get("result") or {}).get("images") or [])
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        url_value = image.get("url")
+        if isinstance(url_value, list) and url_value:
+            return str(url_value[0])
+        if isinstance(url_value, str) and url_value:
+            return url_value
+    return None
+
+
+def write_image_ref(image_ref: str, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if image_ref.startswith(("http://", "https://")):
+        return download_url(image_ref, output_path)
+
+    encoded = image_ref.split(",", 1)[1] if image_ref.startswith("data:image/") else image_ref
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except Exception as exc:
+        raise RunnerError("Image API response is not a valid URL or base64 image") from exc
+    output_path.write_bytes(image_bytes)
+    if output_path.stat().st_size <= 0:
+        raise RunnerError(f"Generated image file is empty: {output_path}")
+    return output_path
+
+
+def generate_ai_image(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    prompt: str,
+    size: str,
+    quality: str,
+    output_format: str,
+    output_path: Path,
+    timeout_seconds: int,
+    poll_interval: float,
+) -> Dict[str, Any]:
+    if not api_key:
+        raise RunnerError("assetStrategy=generated_image requires --image-api-key, or provide --background-image.")
+
+    cleaned_base_url = clean_image_base_url(base_url)
+    provider = infer_image_provider(cleaned_base_url, model)
+    payload: Dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+    }
+    if provider == "volcengine":
+        payload.update({"size": size, "response_format": "url", "watermark": False})
+    else:
+        payload.update({"n": 1, "size": size, "quality": quality, "output_format": output_format})
+
+    response = image_request_json(
+        "POST",
+        image_generation_url(cleaned_base_url, provider),
+        api_key,
+        payload,
+        timeout=timeout_seconds,
+    )
+    image_ref = extract_image_ref(response)
+    provider_task_id = extract_provider_task_id(response)
+
+    if provider_task_id and not image_ref:
+        deadline = time.time() + timeout_seconds
+        current: Dict[str, Any] = response
+        while time.time() < deadline:
+            time.sleep(poll_interval)
+            current = image_request_json(
+                "GET",
+                f"{cleaned_base_url}/v1/tasks/{provider_task_id}",
+                api_key,
+                timeout=timeout_seconds,
+            )
+            task_data = current.get("data") if isinstance(current.get("data"), dict) else current
+            status = str(task_data.get("status") or "").lower()
+            print(f"[image] task={provider_task_id} status={status}")
+            if status == "completed":
+                image_ref = extract_async_task_image_url(task_data)
+                break
+            if status in TERMINAL_IMAGE_STATUSES:
+                raise RunnerError(f"Image task failed: status={status}, response={current}")
+
+    if not image_ref:
+        raise RunnerError(f"Image API response does not contain image data: {response}")
+
+    image_path = write_image_ref(image_ref, output_path)
+    return {
+        "path": str(image_path),
+        "model": model,
+        "provider": provider,
+        "baseUrl": cleaned_base_url,
+        "size": size,
+        "quality": quality,
+        "outputFormat": output_format,
+        "providerTaskId": provider_task_id,
+        "prompt": prompt,
+    }
 
 
 def ark_request_json(method: str, url: str, api_key: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1363,7 +1707,11 @@ def make_audio(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     source_path: Optional[Path] = None
     mode = "silent"
-    selected_voice_name = choose_voice_name(voice_name, voice_seed)
+    selected_voice_name = choose_voice_name(
+        voice_name,
+        voice_seed,
+        use_installed_defaults=bool(local_tts and generate_dubbing and not voiceover_path),
+    )
     if voiceover_path:
         if not voiceover_path.exists():
             raise RunnerError(f"Voiceover path not found: {voiceover_path}")
@@ -1375,6 +1723,7 @@ def make_audio(
             mode = "local_sapi"
 
     if source_path:
+        normalized_path = output_path.with_suffix(".normalized.wav")
         command = [
             ffmpeg_bin,
             "-hide_banner",
@@ -1387,16 +1736,24 @@ def make_audio(
             "loudnorm=I=-16:LRA=7:TP=-1.5,aformat=sample_rates=44100:channel_layouts=stereo",
             "-c:a",
             "pcm_s16le",
-            str(output_path),
+            str(normalized_path),
         ]
         run(command, label="prepare-voiceover")
-        audio_duration = ffprobe_duration(ffprobe_bin, output_path) or duration
+        silence_detail = compact_audio_silence(
+            ffmpeg_bin=ffmpeg_bin,
+            ffprobe_bin=ffprobe_bin,
+            input_path=normalized_path,
+            output_path=output_path,
+        )
+        audio_duration = float(silence_detail.get("duration") or 0.0) or ffprobe_duration(ffprobe_bin, output_path) or duration
         return {
             "mode": mode,
             "path": str(output_path),
             "sourcePath": str(source_path),
+            "rawPreparedPath": str(normalized_path),
             "duration": round(audio_duration, 3),
             "voiceName": selected_voice_name if mode == "local_sapi" else None,
+            "silenceRemoval": silence_detail,
         }
 
     command = [
@@ -1754,7 +2111,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--script-text", default=None, help="Main spoken copy and subtitle text.")
     parser.add_argument("--prompt-text", default=None, help="Custom visual prompt for AI video generation.")
     parser.add_argument("--visual-template-id", default="decompression")
-    parser.add_argument("--asset-strategy", default="generated", choices=("generated", "local_video", "local_image", "scraped"))
+    parser.add_argument("--asset-strategy", default="generated", choices=("generated", "generated_image", "local_video", "local_image", "scraped"))
     parser.add_argument("--background-video", default=None, help="Local background MP4/MOV. Preferred for local production.")
     parser.add_argument("--background-image", default=None, help="Local background image. It will be converted to a video background.")
     parser.add_argument("--background-url", default=None, help="Direct downloadable video URL. Used for scraped/simple remote source mode.")
@@ -1817,6 +2174,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ark-model", default=os.getenv("SEEDANCE_MODEL", "doubao-seedance-1-0-pro-250528"))
     parser.add_argument("--ark-poll-interval", type=float, default=5.0)
     parser.add_argument("--ark-timeout-seconds", type=int, default=900)
+    parser.add_argument(
+        "--image-api-key",
+        "--openai-image-api-key",
+        dest="image_api_key",
+        default=(
+            os.getenv("OPENAI_IMAGE_API_KEY")
+            or os.getenv("APIMART_API_KEY")
+            or os.getenv("ARK_IMAGE_API_KEY")
+        ),
+        help="OpenAI/Ark compatible image API key for assetStrategy=generated_image.",
+    )
+    parser.add_argument(
+        "--image-base-url",
+        "--openai-image-base-url",
+        dest="image_base_url",
+        default=(
+            os.getenv("OPENAI_IMAGE_BASE_URL")
+            or os.getenv("APIMART_BASE_URL")
+            or os.getenv("ARK_IMAGE_BASE_URL")
+            or os.getenv("VOLCENGINE_IMAGE_BASE_URL")
+        ),
+    )
+    parser.add_argument(
+        "--image-model",
+        "--openai-image-model",
+        dest="image_model",
+        default=(
+            os.getenv("OPENAI_IMAGE_MODEL")
+            or os.getenv("APIMART_IMAGE_MODEL")
+            or os.getenv("ARK_IMAGE_MODEL")
+            or os.getenv("VOLCENGINE_IMAGE_MODEL")
+        ),
+    )
+    parser.add_argument("--image-size", default="864x1536")
+    parser.add_argument("--image-quality", default="low")
+    parser.add_argument("--image-output-format", default="png")
+    parser.add_argument("--image-timeout-seconds", type=int, default=240)
+    parser.add_argument("--image-poll-interval", type=float, default=5.0)
     parser.add_argument("--seed", default=None)
     parser.add_argument("--output", default=None, help="Final MP4 path. Defaults to ./pre_roll_outputs/<run-id>/final.mp4")
     parser.add_argument("--output-json", default=None, help="Write result JSON here.")
@@ -1881,6 +2276,18 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         "arkApiKey": "ark_api_key",
         "arkBaseUrl": "ark_base_url",
         "arkModel": "ark_model",
+        "imageApiKey": "image_api_key",
+        "openaiImageApiKey": "image_api_key",
+        "imageBaseUrl": "image_base_url",
+        "openaiImageBaseUrl": "image_base_url",
+        "imageModel": "image_model",
+        "openaiImageModel": "image_model",
+        "imageGenerationModel": "image_model",
+        "imageSize": "image_size",
+        "imageQuality": "image_quality",
+        "imageOutputFormat": "image_output_format",
+        "imageTimeoutSeconds": "image_timeout_seconds",
+        "imagePollInterval": "image_poll_interval",
         "seed": "seed",
         "output": "output",
         "outputJson": "output_json",
@@ -1975,6 +2382,22 @@ def main() -> int:
     visual_type = normalize_visual_type(args.visual_template_id)
     scene = choose_scene(visual_type, args.seed)
     visual_prompt = build_visual_prompt(visual_type, scene, args.prompt_text)
+    effective_asset_strategy = "generated_image" if visual_type == "ai_beauty_image" else args.asset_strategy
+    image_api_key = args.image_api_key
+    image_base_url = args.image_base_url
+    image_model = args.image_model
+    if effective_asset_strategy == "generated_image" and not image_api_key and args.ark_api_key:
+        image_api_key = args.ark_api_key
+    if not image_base_url:
+        if image_api_key and image_api_key == args.ark_api_key:
+            image_base_url = args.ark_base_url
+        else:
+            image_base_url = "https://api.openai.com"
+    if not image_model:
+        if "volces.com" in str(image_base_url).lower() or "ark" in str(image_base_url).lower():
+            image_model = "doubao-seedream-5-0-260128"
+        else:
+            image_model = "gpt-image-2"
 
     subtitle_config = merge_dict(
         {
@@ -2147,7 +2570,38 @@ def main() -> int:
             raise RunnerError(json.dumps(asset_preflight_report, ensure_ascii=False, indent=2))
 
     if (
-        args.asset_strategy == "generated"
+        effective_asset_strategy == "generated_image"
+        and not args.dry_run
+        and (background_video or background_url)
+    ):
+        raise RunnerError(
+            "assetStrategy=generated_image must use a static image source. "
+            "Use --background-image or provide --image-api-key to generate one."
+        )
+
+    image_generation_result: Optional[Dict[str, Any]] = None
+    if (
+        effective_asset_strategy == "generated_image"
+        and not args.dry_run
+        and not background_image
+    ):
+        image_output = work_dir / f"generated_image.{str(args.image_output_format or 'png').lstrip('.')}"
+        image_generation_result = generate_ai_image(
+            api_key=str(image_api_key or ""),
+            base_url=str(image_base_url or ""),
+            model=str(image_model or ""),
+            prompt=visual_prompt,
+            size=str(args.image_size or "864x1536"),
+            quality=str(args.image_quality or "low"),
+            output_format=str(args.image_output_format or "png"),
+            output_path=image_output,
+            timeout_seconds=int(args.image_timeout_seconds),
+            poll_interval=float(args.image_poll_interval),
+        )
+        background_image = image_output
+
+    if (
+        effective_asset_strategy == "generated"
         and not args.dry_run
         and not background_video
         and not background_image
@@ -2177,10 +2631,23 @@ def main() -> int:
         "mode": "standalone",
         "runId": run_id,
         "scriptText": script_text,
+        "voiceoverText": script_text,
+        "subtitleText": script_text,
+        "exactTextPolicy": "voiceover and main subtitles use this same text; visual-only disclaimer is separate",
         "visualTemplateId": visual_type,
         "scene": scene,
         "visualPrompt": visual_prompt,
-        "assetStrategy": args.asset_strategy,
+        "assetStrategy": effective_asset_strategy,
+        "requestedAssetStrategy": args.asset_strategy,
+        "imageGeneration": {
+            "apiKeyConfigured": bool(image_api_key),
+            "baseUrl": clean_image_base_url(str(image_base_url or "")),
+            "model": image_model,
+            "size": args.image_size,
+            "quality": args.image_quality,
+            "outputFormat": args.image_output_format,
+            "canGenerateStaticImage": bool(effective_asset_strategy == "generated_image" and image_api_key),
+        },
         "realVideoContentRequired": True,
         "revisionSourcePolicy": (
             "For revisions, rerender from a clean source such as baseVideoPath/revisionSourcePath "
@@ -2190,7 +2657,8 @@ def main() -> int:
             background_video
             or background_image
             or background_url
-            or (args.asset_strategy == "generated" and args.ark_api_key)
+            or (effective_asset_strategy == "generated" and args.ark_api_key)
+            or (effective_asset_strategy == "generated_image" and image_api_key)
         ),
         "assetRoot": str(asset_root) if asset_root else None,
         "assetManifest": str(asset_manifest_path) if asset_manifest_path else None,
@@ -2258,6 +2726,7 @@ def main() -> int:
         },
         "backgroundVideo": str(background_video) if background_video else None,
         "backgroundImage": str(background_image) if background_image else None,
+        "generatedImagePath": str(image_generation_result.get("path")) if image_generation_result else None,
         "backgroundUrl": background_url,
         "voiceoverPath": str(voiceover_path) if voiceover_path else None,
         "materialSelectionJson": str(Path(args.material_selection_json).expanduser().resolve()) if args.material_selection_json else None,
@@ -2301,7 +2770,7 @@ def main() -> int:
         "originalVisualPath": base_detail.get("path"),
         "originalVisualType": base_detail.get("type"),
         "generatedVideoPath": str(ark_result.get("path")) if ark_result and ark_result.get("path") else None,
-        "scrapedVideoPath": str(base_detail.get("path")) if args.asset_strategy == "scraped" else None,
+        "scrapedVideoPath": str(base_detail.get("path")) if effective_asset_strategy == "scraped" else None,
         "rule": (
             "Use revisionSourcePath/baseVideoPath or the original clean visual source for revisions; "
             "do not reprocess finalVideoPath because final outputs already contain baked-in overlays."
@@ -2327,7 +2796,11 @@ def main() -> int:
         voice_seed=args.seed,
         output_path=audio_path,
     )
-    final_duration = max(estimated_duration, float(audio_detail.get("duration") or estimated_duration))
+    audio_duration = float(audio_detail.get("duration") or 0.0)
+    if audio_detail.get("mode") != "silent" and audio_duration > 0:
+        final_duration = audio_duration
+    else:
+        final_duration = estimated_duration
     subtitle_sync_detail = resolve_subtitle_audio_sync(
         ffmpeg_bin=ffmpeg_bin,
         audio_path=audio_path,
@@ -2400,6 +2873,7 @@ def main() -> int:
             "originalVisualPath": clean_source_detail["originalVisualPath"],
             "originalVisualType": clean_source_detail["originalVisualType"],
             "generatedVideoPath": clean_source_detail["generatedVideoPath"],
+            "generatedImagePath": str(image_generation_result.get("path")) if image_generation_result else None,
             "scrapedVideoPath": clean_source_detail["scrapedVideoPath"],
             "coverPath": cover,
             "subtitlePath": str(ass_path),
@@ -2407,6 +2881,7 @@ def main() -> int:
             "workDir": str(work_dir),
         },
         "steps": {
+            "imageGeneration": image_generation_result,
             "arkGeneration": ark_result,
             "background": base_detail,
             "cleanRevisionSource": clean_source_detail,

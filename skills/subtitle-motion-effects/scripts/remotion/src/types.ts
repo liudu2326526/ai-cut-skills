@@ -86,6 +86,7 @@ export type SubtitleEffect = {
   badgeSpinDegrees?: number;
   badgeSpinDuration?: number;
   badgeSpinWobble?: number;
+  badgeTravelHeight?: number;
   amplitude?: number;
   stackColors?: string[];
   stackOffset?: number;

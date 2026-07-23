@@ -14,7 +14,7 @@ description: Create, validate, render, or integrate animated subtitle effect lay
 - 前贴里提到 `汽水音乐` 或 `汽水` 时必须走 `branding.words`，并设置 SodaFont、品牌绿、黑色描边和更大的字号。
 - Skill 已内置 `assets/fonts/SodaFont-Regular.otf` 和 `assets/fonts/FZLanTingHei-Medium.ttf`；默认模板会加载它们，外部流程也可以用 `fonts[]` 覆盖。
 - 用户要的“字从上往下出现”使用 `drop_in` 或 `drop_bounce`，不要用 `stack_pop`。`stack_pop` 是叠影弹出，保留兼容但不是这类效果。
-- 爱心跳字使用 `heart_jump`，现在会旋转跳跃并带残影。
+- 爱心跳字使用 `heart_jump`，现在会像参考短视频一样在每个字之间丝滑跳动，并带旋转和残影。
 - 金币跳字使用 `coin_jump`，现在使用金色圆片高光样式。
 - 歌词/高亮可用 `lyrics_gold`、`lyrics_cyan`、`lyrics_green`、`lyrics_pink`、`lyrics_orange`、`lyrics_violet`。
 

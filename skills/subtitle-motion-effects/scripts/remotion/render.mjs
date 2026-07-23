@@ -188,9 +188,10 @@ const EFFECT_PRESETS = {
       badgeShape: 'heart',
       badgeColor: '#FF4D8D',
       badgeSize: 34,
-      badgeSpinDegrees: 720,
-      badgeSpinDuration: 0.68,
-      badgeSpinWobble: 16,
+      badgeSpinDegrees: 420,
+      badgeSpinDuration: 0.95,
+      badgeSpinWobble: 12,
+      badgeTravelHeight: 18,
     },
   },
   coin_jump: {
@@ -748,7 +749,7 @@ const normalizeEffect = (raw = {}, cueDuration, index) => {
   if (effect.badgeShape != null && !['dot', 'coin', 'heart', 'spark'].includes(effect.badgeShape)) {
     throw new SubtitleMotionError(`subtitles[${index}].effect.badgeShape must be dot, coin, heart, or spark`);
   }
-  for (const field of ['badgeSize', 'badgeSpinDegrees', 'badgeSpinDuration', 'badgeSpinWobble', 'amplitude', 'stackOffset']) {
+  for (const field of ['badgeSize', 'badgeSpinDegrees', 'badgeSpinDuration', 'badgeSpinWobble', 'badgeTravelHeight', 'amplitude', 'stackOffset']) {
     if (raw[field] != null) {
       const number = Number(raw[field]);
       if (!Number.isFinite(number) || number < 0) {
