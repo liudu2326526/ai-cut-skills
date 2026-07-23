@@ -1,0 +1,46 @@
+{
+  "canvas": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "duration": 3.2,
+    "background_color": "#26313A"
+  },
+  "defaultStyle": {
+    "fontFamily": "Arial",
+    "fontSize": 54,
+    "fontWeight": 800,
+    "strokeWidth": 3,
+    "shadowBlur": 0,
+    "lineHeight": 1.12,
+    "letterSpacing": 0
+  },
+  "frontend": {
+    "words": [
+      {"word": "每", "start_time": 0, "end_time": 120},
+      {"word": "天", "start_time": 120, "end_time": 260},
+      {"word": "听", "start_time": 420, "end_time": 560},
+      {"word": "歌", "start_time": 560, "end_time": 720},
+      {"word": "1", "start_time": 920, "end_time": 1060},
+      {"word": "5", "start_time": 1060, "end_time": 1180},
+      {"word": "分", "start_time": 1180, "end_time": 1380},
+      {"word": "钟", "start_time": 1380, "end_time": 1580},
+      {"word": "余", "start_time": 1900, "end_time": 2060},
+      {"word": "额", "start_time": 2060, "end_time": 2220},
+      {"word": "一", "start_time": 2380, "end_time": 2520},
+      {"word": "直", "start_time": 2520, "end_time": 2680},
+      {"word": "涨", "start_time": 2850, "end_time": 3100}
+    ]
+  },
+  "subtitles": [
+    {
+      "id": "synced",
+      "start": 0,
+      "end": 3.2,
+      "text": "每天听歌15分钟余额一直涨",
+      "position": "lower_center",
+      "stylePreset": "lyric_gold",
+      "effectPreset": "lyrics_gold"
+    }
+  ]
+}

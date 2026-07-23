@@ -1,0 +1,125 @@
+{
+  "canvas": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "duration": 15,
+    "background_color": "#26313A"
+  },
+  "fonts": [
+    {
+      "family": "FZLanTing",
+      "path": "assets/fonts/FZLanTingHei-Medium.ttf"
+    },
+    {
+      "family": "SodaFont",
+      "path": "assets/fonts/SodaFont-Regular.otf"
+    }
+  ],
+  "branding": {
+    "words": ["汽水音乐", "汽水"],
+    "style": {
+      "fontFamily": "SodaFont",
+      "fontSize": 58,
+      "fontWeight": 900,
+      "color": "#3BFD42",
+      "strokeColor": "#071307",
+      "strokeWidth": 4,
+      "shadowBlur": 0
+    },
+    "scale": 1.15
+  },
+  "defaultStyle": {
+    "fontFamily": "FZLanTing",
+    "fontSize": 50,
+    "fontWeight": 800,
+    "strokeColor": "#000000",
+    "strokeWidth": 3,
+    "shadowBlur": 0,
+    "lineHeight": 1.12,
+    "letterSpacing": 0
+  },
+  "subtitles": [
+    {
+      "id": "drop_in",
+      "start": 0,
+      "end": 1.7,
+      "text": "字从上往下出现",
+      "position": "lower_center",
+      "stylePreset": "standard_white",
+      "effectPreset": "drop_in"
+    },
+    {
+      "id": "heart",
+      "start": 1.8,
+      "end": 3.3,
+      "text": "爱心旋转跳跃有残影",
+      "position": "lower_center",
+      "stylePreset": "pink_heart",
+      "effectPreset": "heart_jump"
+    },
+    {
+      "id": "coin",
+      "start": 3.4,
+      "end": 4.9,
+      "text": "金币跳动更精致",
+      "position": "lower_center",
+      "stylePreset": "variety_yellow",
+      "effectPreset": "coin_jump"
+    },
+    {
+      "id": "lyrics_green",
+      "start": 5.0,
+      "end": 6.5,
+      "text": "第一天听汽水音乐",
+      "position": "middle_lower",
+      "stylePreset": "lyric_green",
+      "effectPreset": "lyrics_green"
+    },
+    {
+      "id": "lyrics_pink",
+      "start": 6.6,
+      "end": 8.1,
+      "text": "每天听歌福利一直涨",
+      "position": "middle_lower",
+      "stylePreset": "lyric_pink",
+      "effectPreset": "lyrics_pink"
+    },
+    {
+      "id": "lyrics_orange",
+      "start": 8.2,
+      "end": 9.7,
+      "text": "金币到账提醒来了",
+      "position": "middle_lower",
+      "stylePreset": "lyric_orange",
+      "effectPreset": "lyrics_orange"
+    },
+    {
+      "id": "lyrics_violet",
+      "start": 9.8,
+      "end": 11.3,
+      "text": "高亮颜色可以切换",
+      "position": "middle_lower",
+      "stylePreset": "lyric_violet",
+      "effectPreset": "lyrics_violet"
+    },
+    {
+      "id": "drop_bounce",
+      "start": 11.4,
+      "end": 13.1,
+      "text": "弹性落字也可以",
+      "position": "lower_center",
+      "stylePreset": "blue_glow",
+      "effectPreset": "drop_bounce"
+    },
+    {
+      "id": "notice",
+      "start": 13.2,
+      "end": 14.8,
+      "text": "警示语默认不加动效",
+      "position": "bottom_center",
+      "role": "disclaimer",
+      "stylePreset": "standard_white"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Subtitle Motion Effects"
+  short_description: "Render animated subtitle layers with Remotion"
+  default_prompt: "Use $subtitle-motion-effects to render animated subtitles as a transparent layer for a video."

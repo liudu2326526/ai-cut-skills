@@ -10,6 +10,7 @@ coverage/
 .cache/
 tmp/
 temp/
+pre_roll_outputs/
 
 # Local design documents
 docs/superpowers/specs/
