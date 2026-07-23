@@ -48,6 +48,10 @@ Every deliverable must include that fixed top-left logo and the bottom-right vis
 - `汽水音乐` and `汽水` use SodaFont.
 - Other main subtitle text uses 方正兰亭.
 - Disclaimer text uses clear white Microsoft YaHei by default.
+- Production render requires both `--body-font-path` and `--brand-font-path`; both must resolve to existing `.ttf`, `.otf`, or `.ttc` files.
+- `--fonts-dir` is optional and does not satisfy either required file path.
+- `--body-font-name` and `--brand-font-name` must be the selected files' actual internal family names. For the default pair, use `FZLanTingHeiS-DB1-GB` with 方正兰亭中粗黑 and `Soda Font` with `SodaFont-Regular.otf`.
+- Prefer absolute paths. Relative paths resolve from the process working directory, not from the Skill or JSON config file.
 
 ## Material Strategy
 
@@ -59,7 +63,7 @@ Use the caller's current project/workspace materials first. The business materia
 - body/overlay images and insert clips
 - amount templates, balance screenshots, or end-frame/logo assets
 
-After finding the right project material root, pass its real files explicitly as logo/font/icon inputs and sync it into the Manifest when its images/videos will be used for overlay or insert matching. Any material package inside the skill directory is only a compatibility fallback for local experiments.
+After finding the right project material root, pass its real files explicitly as logo/font/icon inputs and sync it into the Manifest when its images/videos will be used for overlay or insert matching. The skill directory does not provide fallback business materials.
 
 If the caller wants extra local materials to participate in insertion or overlay matching, they must provide:
 

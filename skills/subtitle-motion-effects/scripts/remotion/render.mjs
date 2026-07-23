@@ -8,6 +8,16 @@ import {fileURLToPath} from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY_POINT = path.join(ROOT, 'src', 'index.tsx');
+const SYSTEM_FONT_FAMILIES = new Set([
+  'arial',
+  'arial, sans-serif',
+  'sans-serif',
+  'serif',
+  'monospace',
+  'system-ui',
+  '-apple-system',
+  'microsoft yahei',
+]);
 const EFFECT_DEFINITIONS = {
   plain: {
     aliases: ['plain', 'none', '静态', '普通'],
@@ -845,13 +855,13 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
     if (!font || typeof font !== 'object') throw new SubtitleMotionError(`fonts[${index}] must be an object`);
     const family = String(font.family ?? '').trim();
     if (!family) throw new SubtitleMotionError(`fonts[${index}].family is required`);
-    let sourcePath = null;
-    if (font.path != null) {
-      sourcePath = resolveFromRoot(assetRoot, font.path, `fonts[${index}].path`);
-      if (!fs.existsSync(sourcePath)) throw new SubtitleMotionError(`Font file not found: ${sourcePath}`);
-      if (!FONT_EXTENSIONS.has(path.extname(sourcePath).toLowerCase())) {
-        throw new SubtitleMotionError(`Unsupported font file type: ${sourcePath}`);
-      }
+    if (font.path == null) {
+      throw new SubtitleMotionError(`fonts[${index}].path is required for custom font family: ${family}`);
+    }
+    const sourcePath = resolveFromRoot(assetRoot, font.path, `fonts[${index}].path`);
+    if (!fs.existsSync(sourcePath)) throw new SubtitleMotionError(`Font file not found: ${sourcePath}`);
+    if (!FONT_EXTENSIONS.has(path.extname(sourcePath).toLowerCase())) {
+      throw new SubtitleMotionError(`Unsupported font file type: ${sourcePath}`);
     }
     return {
       family,
@@ -974,6 +984,23 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
       effectPreset: cueEffectPresetName == null ? undefined : String(cueEffectPresetName),
     };
   });
+
+  const declaredFontFamilies = new Set(fonts.map((font) => font.family));
+  const usedFontFamilies = new Set();
+  for (const cue of subtitles) {
+    for (const style of [cue.style, ...cue.spans.map((span) => span.style), ...cue.tokens.map((token) => token.style)]) {
+      const family = String(style?.fontFamily ?? '').trim();
+      if (family) usedFontFamilies.add(family);
+    }
+  }
+  for (const family of usedFontFamilies) {
+    if (SYSTEM_FONT_FAMILIES.has(family.toLowerCase())) continue;
+    if (!declaredFontFamilies.has(family)) {
+      throw new SubtitleMotionError(
+        `Custom font family ${family} is used by subtitle styles but has no matching fonts[] entry with an explicit path`,
+      );
+    }
+  }
 
   const lastSubtitleEnd = Math.max(...subtitles.map((cue) => cue.end));
   const requestedDuration = canvasRaw.duration == null ? null : positive(canvasRaw.duration, 'canvas.duration');

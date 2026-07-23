@@ -9,18 +9,18 @@
   },
   "fonts": [
     {
-      "family": "FZLanTing",
+      "family": "FZLanTingHeiS-DB1-GB",
       "path": "assets/fonts/FZLanTingHei-Medium.ttf"
     },
     {
-      "family": "SodaFont",
+      "family": "Soda Font",
       "path": "assets/fonts/SodaFont-Regular.otf"
     }
   ],
   "branding": {
     "words": ["汽水音乐", "汽水"],
     "style": {
-      "fontFamily": "SodaFont",
+      "fontFamily": "Soda Font",
       "fontSize": 76,
       "fontWeight": 900,
       "color": "#3BFD42",
@@ -31,7 +31,7 @@
     "scale": 1.15
   },
   "defaultStyle": {
-    "fontFamily": "FZLanTing",
+    "fontFamily": "FZLanTingHeiS-DB1-GB",
     "fontSize": 64,
     "fontWeight": 800,
     "color": "#FFFFFF",
@@ -44,11 +44,11 @@
   "defaultStylePreset": "standard_white",
   "defaultEffectPreset": "pop_bold",
   "defaultEffect": {
-    "type": "drop_word",
-    "preset": "soft_drop",
+    "type": "pop_word",
+    "preset": "tiktok_pop",
     "granularity": "char",
-    "duration": 0.52,
-    "stagger": 0.032
+    "duration": 0.42,
+    "stagger": 0.035
   },
   "subtitles": [
     {
@@ -74,7 +74,7 @@
         {"word": "钟", "start_time": 1650, "end_time": 2000}
       ],
       "effect": {
-        "type": "pop_word"
+        "type": "drop_word"
       }
     },
     {

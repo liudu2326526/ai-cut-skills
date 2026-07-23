@@ -4,7 +4,9 @@
 
 - `canvas`: 画布配置，常用 `width=1080`、`height=1920`、`fps=30`、`duration`。
 - `fonts`: 字体文件，`family` 必须和字幕样式里的 `fontFamily` 一致，`path` 可以是绝对路径或相对 `--asset-root`。
-- Skill 默认带了 `assets/fonts/FZLanTingHei-Medium.ttf` 和 `assets/fonts/SodaFont-Regular.otf`，可以直接在 `fonts[]` 里引用。
+- Skill 内置 7 个方正兰亭字重和 Soda Font；完整路径、真实 family 与建议用途见 [font-catalog.json](font-catalog.json)。
+- 生产时间线中，每个被 `defaultStyle`、`branding.style`、字幕 `style` 或 `spans` 使用的自定义 `fontFamily`，都必须有一条 family 完全相同且 `path` 非空的 `fonts[]` 记录。
+- `fonts[].path` 建议使用绝对路径。相对路径只相对 CLI 的 `--asset-root` 解析，不相对时间线文件或当前 Skill 自动解析；不得依赖本机恰好安装了同名字体。
 - `branding`: 品牌词规则。前贴里建议把 `汽水音乐`、`汽水` 放到 `branding.words`。
 - `defaultStyle` / `defaultStylePreset`: 默认字幕样式。
 - `defaultEffect` / `defaultEffectPreset`: 默认字幕动效。
@@ -20,7 +22,7 @@
   "branding": {
     "words": ["汽水音乐", "汽水"],
     "style": {
-      "fontFamily": "SodaFont",
+      "fontFamily": "Soda Font",
       "fontSize": 76,
       "fontWeight": 900,
       "color": "#3BFD42",

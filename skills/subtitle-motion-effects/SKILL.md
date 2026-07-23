@@ -1,6 +1,6 @@
 ---
 name: subtitle-motion-effects
-description: Create, validate, render, or integrate animated subtitle effect layers for videos using a bundled Remotion renderer. Use when Codex needs 字幕动效, 落字入场, 从上往下出现的字幕, 逐字弹跳, 卡拉 OK 高亮, 字上方爱心/金币跳动, 抖音风字幕, transparent ProRes 4444 subtitle layers, ASS-to-JSON style planning, subtitle overlays for pre-roll/front-ad videos, or reusable subtitle motion assets for main video workflows.
+description: Create, validate, render, or integrate animated subtitle effect layers for videos using a bundled Remotion renderer and a multi-weight 方正兰亭/Soda font catalog with explicit font-path contracts. Use when Codex needs 字幕动效, 字体字重选择, 落字入场, 从上往下出现的字幕, 逐字弹跳, 卡拉 OK 高亮, 字上方爱心/金币跳动, 抖音风字幕, transparent ProRes 4444 subtitle layers, ASS-to-JSON style planning, subtitle overlays for pre-roll/front-ad videos, or reusable subtitle motion assets for main video workflows.
 ---
 
 # 字幕动效渲染
@@ -14,7 +14,8 @@ description: Create, validate, render, or integrate animated subtitle effect lay
 - 渲染出来的主字幕必须去掉标点符号。去标点只发生在最终显示层，不要提前改口播文本、时间戳、cue 顺序或分段。
 - 主字幕只能出现一层。给前贴视频叠字幕动效前，必须先用 `aivideoeditor-pre-roll` 的 `--subtitle-render-mode motion` 生成不含普通主字幕的底片；不要把已经烧了普通主字幕的 `final.mp4` 当作 composite 输入。
 - 前贴里提到 `汽水音乐` 或 `汽水` 时必须走 `branding.words`，并设置 SodaFont、品牌绿、黑色描边和更大的字号。
-- Skill 已内置 `assets/fonts/SodaFont-Regular.otf` 和 `assets/fonts/FZLanTingHei-Medium.ttf`；默认模板会加载它们，外部流程也可以用 `fonts[]` 覆盖。
+- Skill 已内置 Soda Font 和方正兰亭超细黑、细黑、常规、中黑、中粗黑、粗黑、大黑 7 个字重；默认主字幕使用中粗黑。完整文件名、真实 family 和适用场景见 [font-catalog.json](references/font-catalog.json)。
+- 生产渲染必须在 `fonts[]` 中为每个实际使用的自定义字体提供 `path`。使用绝对路径最稳妥；相对路径只相对 `--asset-root` 解析。`style.fontFamily`、`branding.style.fontFamily` 必须等于对应 `fonts[].family`，不得只写 family 而省略字体文件路径，也不得依赖系统字体回退。
 - 用户要的“字从上往下出现”使用 `drop_in` 或 `drop_bounce`，不要用 `stack_pop`。`stack_pop` 是叠影弹出，保留兼容但不是这类效果。
 - 爱心跳字使用 `heart_jump`，现在会像参考短视频一样在每个字之间丝滑跳动，并带旋转和残影。
 - 金币跳字使用 `coin_jump`，现在使用金色圆片高光样式。
@@ -88,12 +89,13 @@ node "$CLI" render \
 
 - `start`、`end` 使用秒，必须满足 `0 <= start < end`。
 - `fonts[].path` 可以是绝对路径，也可以相对 `--asset-root`。
+- 使用内置字体的相对路径时，把 `--asset-root` 设为本 Skill 根目录；如果 `--asset-root` 是任务工作区，则把字体复制进工作区，或在时间线中写入内置字体的真实绝对路径。JSON 中不要填写 `$HOME`、`%USERPROFILE%` 等未展开变量。
 - `branding.words` 会把指定词自动拆成品牌字体 span，例如 `汽水音乐`、`汽水`。
 - `position` 支持 `lower_center`、`middle_lower`、`center`、`top_center`、`bottom_center`、`custom`。
 - 字幕默认 `maxWidth` 是画布宽度的 `86%`，避免触边。
 - 优先传 TTS 的 `frontend.words` 或每条字幕的 `tokens` / `words`，报告里 `syncMode=timed_tokens` 才表示用了真实字词时间戳。
 
-详细字段见 [effects.md](references/effects.md)。示例见 [timeline-template.json](references/timeline-template.json) 和 [preset-gallery.json](references/preset-gallery.json)。
+详细字段见 [effects.md](references/effects.md)，字体映射见 [font-catalog.json](references/font-catalog.json)。示例见 [timeline-template.json](references/timeline-template.json) 和 [preset-gallery.json](references/preset-gallery.json)。
 
 ## 前贴和正文接入
 

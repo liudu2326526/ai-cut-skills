@@ -26,7 +26,7 @@ skills/
 仓库中的 `skills/` 是唯一可信源。克隆或更新仓库后，用同一份仓库内容同步 Codex 与 WorkBuddy，避免两个运行时加载到不同版本：
 
 ```bash
-git clone git@github.com:014-code/ai-cut-skills.git
+git clone git@github.com:liudu2326526/ai-cut-skills.git
 CODEX_SKILLS="${CODEX_HOME:-$HOME/.codex}/skills"
 WORKBUDDY_SKILLS="${WORKBUDDY_HOME:-$HOME/.workbuddy}/skills"
 mkdir -p "$CODEX_SKILLS" "$WORKBUDDY_SKILLS"

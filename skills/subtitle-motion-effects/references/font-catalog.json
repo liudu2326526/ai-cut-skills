@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "path_base": "subtitle-motion-effects skill root",
+  "fonts": [
+    {
+      "label": "方正兰亭超细黑简体",
+      "family": "FZLanTingHeiS-UL-GB",
+      "postscript_name": "FZLTCXHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-UL-GB.ttf",
+      "recommended_use": "轻量说明文字"
+    },
+    {
+      "label": "方正兰亭细黑简体",
+      "family": "FZLanTingHeiS-L-GB",
+      "postscript_name": "FZLTXIHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-L-GB.ttf",
+      "recommended_use": "较轻正文"
+    },
+    {
+      "label": "方正兰亭黑简体",
+      "family": "FZLanTingHeiS-R-GB",
+      "postscript_name": "FZLTHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-R-GB.ttf",
+      "recommended_use": "常规正文"
+    },
+    {
+      "label": "方正兰亭中黑简体",
+      "family": "FZLanTingHeiS-DB-GB",
+      "postscript_name": "FZLTZHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-DB-GB.ttf",
+      "recommended_use": "中等强调正文"
+    },
+    {
+      "label": "方正兰亭中粗黑简体",
+      "family": "FZLanTingHeiS-DB1-GB",
+      "postscript_name": "FZLTZCHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHei-Medium.ttf",
+      "recommended_use": "默认主字幕"
+    },
+    {
+      "label": "方正兰亭粗黑简体",
+      "family": "FZLanTingHeiS-B-GB",
+      "postscript_name": "FZLTCHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-B-GB.ttf",
+      "recommended_use": "强强调字幕"
+    },
+    {
+      "label": "方正兰亭大黑简体",
+      "family": "FZLanTingHeiS-EB-GB",
+      "postscript_name": "FZLTDHJW--GB1-0",
+      "path": "assets/fonts/FZLanTingHeiS-EB-GB.ttf",
+      "recommended_use": "标题和极强强调"
+    },
+    {
+      "label": "Soda Font Regular",
+      "family": "Soda Font",
+      "postscript_name": "SodaFont-Regular",
+      "path": "assets/fonts/SodaFont-Regular.otf",
+      "recommended_use": "汽水音乐和汽水品牌词"
+    }
+  ]
+}

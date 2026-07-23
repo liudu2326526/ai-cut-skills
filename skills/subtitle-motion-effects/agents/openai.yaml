@@ -1,4 +1,4 @@
 interface:
   display_name: "Subtitle Motion Effects"
-  short_description: "Render animated subtitle layers with Remotion"
-  default_prompt: "Use $subtitle-motion-effects to render animated subtitles as a transparent layer for a video."
+  short_description: "Render animated subtitles with verified font paths"
+  default_prompt: "Use $subtitle-motion-effects to choose a verified 方正兰亭 weight, pass its font path, and render animated subtitles as a transparent layer."

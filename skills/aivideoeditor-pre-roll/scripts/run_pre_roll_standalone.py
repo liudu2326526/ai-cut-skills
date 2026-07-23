@@ -45,8 +45,6 @@ from pre_roll_asset_manifest import (
 )
 
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
-BUNDLED_MATERIAL_ROOT = SKILL_ROOT / "assets" / "汽水物料-新"
 DEFAULT_OUTPUT_DIR = Path.cwd() / "pre_roll_outputs"
 DEFAULT_DISCLAIMER = "本视频为广告创意\n具体奖励金额以实际情况为准"
 FIXED_BRAND_LOGO_WIDTH_PX = 190
@@ -65,6 +63,7 @@ DEFAULT_SUBTITLE_BRAND_LOGO_WIDTH_RATIO = 0.18
 DEFAULT_SUBTITLE_BRAND_LOGO_GAP_RATIO = 0.018
 DEFAULT_VISUAL_DURATION_SECONDS = 8.0
 DEFAULT_MAX_AUTO_VISUAL_DURATION_SECONDS = 10.0
+FONT_FILE_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 VISUAL_COMMON_NEGATIVE = (
     "不要出现任何文字、字幕、Logo、水印（包括 AI 生成水印）、品牌、UI 界面、按钮、二维码、"
     "清晰真人脸、真人露脸、擦边、纹身、知名 IP、影视剧、车牌、涉军涉政、箭头图标等元素。"
@@ -1754,88 +1753,46 @@ def normalize_optional_text_path(value: Optional[str]) -> Optional[str]:
     return str(path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve())
 
 
-def find_first_existing_path(candidates: Iterable[Path]) -> Optional[Path]:
-    for candidate in candidates:
-        if candidate and candidate.exists():
-            return candidate.resolve()
-    return None
-
-
-def find_font_file(filename: str, roots: Iterable[Path]) -> Optional[Path]:
-    for root in roots:
-        if not root.exists():
+def validate_font_path_requirements(
+    *,
+    body_font_path: Optional[Path],
+    brand_font_path: Optional[Path],
+    enforce: bool,
+) -> Dict[str, Any]:
+    required = {
+        "bodyFontPath": body_font_path,
+        "brandFontPath": brand_font_path,
+    }
+    missing = [name for name, path in required.items() if path is None]
+    invalid: List[Dict[str, str]] = []
+    for name, path in required.items():
+        if path is None:
             continue
-        direct = root / filename
-        if direct.exists():
-            return direct.resolve()
-        try:
-            found = next((path for path in root.rglob(filename) if path.is_file()), None)
-        except (OSError, StopIteration):
-            found = None
-        if found:
-            return found.resolve()
-    return None
-
-
-def discover_default_font_paths(use_bundled_assets: bool = True) -> Tuple[Optional[Path], Optional[Path]]:
-    # 没传字体时，优先用 skill 自带的汽水物料包；没有包时再看当前工作区附近。
-    roots = [
-        BUNDLED_MATERIAL_ROOT,
-        BUNDLED_MATERIAL_ROOT / "汽水字体",
-        Path.cwd(),
-        Path.cwd().parent,
-        Path.cwd().parent.parent,
-        SKILL_ROOT,
-        SKILL_ROOT.parent,
-        SKILL_ROOT.parent.parent,
-    ]
-    if not use_bundled_assets:
-        roots = roots[2:]
-    brand_font = find_font_file("SodaFont-Regular.otf", roots)
-    body_font = find_first_existing_path(
-        filter(
-            None,
-            (
-                find_font_file("方正兰亭中粗黑简体.TTF", roots),
-                find_font_file("方正兰亭中黑简体.TTF", roots),
-                find_font_file("方正兰亭黑简体.TTF", roots),
-                find_font_file("方正兰亭粗黑简体.TTF", roots),
-            ),
+        if not path.is_file():
+            invalid.append({"field": name, "path": str(path), "error": "file not found"})
+        elif path.suffix.lower() not in FONT_FILE_EXTENSIONS:
+            invalid.append(
+                {
+                    "field": name,
+                    "path": str(path),
+                    "error": "expected .ttf, .otf, or .ttc",
+                }
+            )
+    report = {
+        "ok": not missing and not invalid,
+        "policy": "production renders require explicit body and brand font files",
+        "bodyFontPath": str(body_font_path) if body_font_path else None,
+        "brandFontPath": str(brand_font_path) if brand_font_path else None,
+        "missing": missing,
+        "invalid": invalid,
+    }
+    if enforce and not report["ok"]:
+        raise RunnerError(
+            "Production render requires valid --body-font-path and --brand-font-path files; "
+            "--fonts-dir is optional and does not replace either explicit path. "
+            + json.dumps(report, ensure_ascii=False)
         )
-    )
-    return body_font, brand_font
-
-
-def discover_default_brand_asset_paths(use_bundled_assets: bool = True) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
-    if not use_bundled_assets or not BUNDLED_MATERIAL_ROOT.exists():
-        return None, None, None
-
-    logo_root = BUNDLED_MATERIAL_ROOT / "logo尾帧"
-    light_logo = find_first_existing_path(
-        [
-            logo_root / "汽水logo-白色竖版.png",
-        ]
-    )
-    dark_logo = find_first_existing_path(
-        [
-            logo_root / "汽水logo-黑色竖版.png",
-        ]
-    )
-    subtitle_icon = find_first_existing_path(
-        [
-            logo_root / "汽水图标.png",
-        ]
-    )
-    return light_logo, dark_logo, subtitle_icon
-
-
-def is_within_path(candidate: Optional[Path], root: Path) -> bool:
-    if not candidate:
-        return False
-    try:
-        return candidate.resolve().is_relative_to(root.resolve())
-    except AttributeError:
-        return str(candidate.resolve()).casefold().startswith(str(root.resolve()).casefold())
+    return report
 
 
 def prepare_fonts_dir(
@@ -1852,7 +1809,7 @@ def prepare_fonts_dir(
         font_sources.extend(
             path
             for path in fonts_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+            if path.is_file() and path.suffix.lower() in FONT_FILE_EXTENSIONS
         )
     for explicit_path, label in ((body_font_path, "body font"), (brand_font_path, "brand font")):
         if explicit_path:
@@ -2917,9 +2874,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asset-root", default=None, help="Local asset root used for manifest tracking and preflight checks.")
     parser.add_argument("--asset-manifest", default=None, help=f"Manifest path. Defaults to {DEFAULT_ASSET_MANIFEST_NAME} in the current workspace when omitted.")
     parser.add_argument("--asset-preflight", default=None, choices=("off", "warn", "required"), help="Validate local visual assets against the manifest before rendering.")
-    parser.add_argument("--use-bundled-assets", dest="use_bundled_assets", action="store_true", help="Use bundled 汽水物料-新 for default logo/font/icon assets.")
-    parser.add_argument("--no-bundled-assets", dest="use_bundled_assets", action="store_false", help="Do not use bundled 汽水物料-新 defaults.")
-    parser.set_defaults(use_bundled_assets=True)
     parser.add_argument("--material-selection-json", default=None, help="Optional JSON file describing the chosen overlay/material items to validate semantically.")
     parser.add_argument("--duration", type=float, default=DEFAULT_VISUAL_DURATION_SECONDS)
     parser.add_argument("--ratio", default="9:16")
@@ -2951,9 +2905,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--brand-primary-color", default=None, help="ASS/RGB fill color for 汽水音乐/汽水 subtitle text.")
     parser.add_argument("--brand-outline-color", default=None, help="ASS/RGB outline color for 汽水音乐/汽水 subtitle text.")
     parser.add_argument("--brand-font-scale", type=float, default=None, help="Scale for 汽水音乐/汽水 subtitle text, for example 1.18.")
-    parser.add_argument("--fonts-dir", default=None, help="Directory containing body and brand font files for FFmpeg fontsdir.")
-    parser.add_argument("--body-font-path", default=None, help="方正兰亭 font file path.")
-    parser.add_argument("--brand-font-path", default=None, help="SodaFont font file path.")
+    parser.add_argument("--fonts-dir", default=None, help="Optional additional FFmpeg fonts directory; it does not replace the two required explicit font paths.")
+    parser.add_argument("--body-font-path", default=None, help="方正兰亭 font file path. Required for production render.")
+    parser.add_argument("--brand-font-path", default=None, help="SodaFont font file path. Required for production render.")
     parser.add_argument("--include-disclaimer-subtitle", action="store_true", default=True)
     parser.add_argument(
         "--no-include-disclaimer-subtitle",
@@ -3056,7 +3010,6 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         "assetRoot": "asset_root",
         "assetManifest": "asset_manifest",
         "assetPreflight": "asset_preflight",
-        "useBundledAssets": "use_bundled_assets",
         "materialSelectionJson": "material_selection_json",
         "duration": "duration",
         "ratio": "ratio",
@@ -3369,15 +3322,6 @@ def main() -> int:
     logo_light_path = normalize_media_input(args.logo_light_path)
     logo_dark_path = normalize_media_input(args.logo_dark_path)
     subtitle_logo_path = normalize_media_input(args.subtitle_logo_path)
-    bundled_logo_light_path, bundled_logo_dark_path, bundled_subtitle_logo_path = discover_default_brand_asset_paths(
-        bool(args.use_bundled_assets)
-    )
-    if not logo_light_path:
-        logo_light_path = bundled_logo_light_path
-    if not logo_dark_path:
-        logo_dark_path = bundled_logo_dark_path
-    if not subtitle_logo_path:
-        subtitle_logo_path = bundled_subtitle_logo_path
     asset_root = normalize_media_input(args.asset_root)
     asset_manifest_path = resolve_asset_manifest_path(args.asset_manifest, asset_root)
     asset_preflight_mode = str(
@@ -3387,13 +3331,11 @@ def main() -> int:
     fonts_dir = normalize_media_input(args.fonts_dir)
     body_font_path = normalize_media_input(args.body_font_path)
     brand_font_path = normalize_media_input(args.brand_font_path)
-    discovered_body_font_path, discovered_brand_font_path = discover_default_font_paths(
-        bool(args.use_bundled_assets)
+    font_path_report = validate_font_path_requirements(
+        body_font_path=body_font_path,
+        brand_font_path=brand_font_path,
+        enforce=not args.dry_run,
     )
-    if not body_font_path:
-        body_font_path = discovered_body_font_path
-    if not brand_font_path:
-        brand_font_path = discovered_brand_font_path
     if not (direct_logo_path or logo_light_path or logo_dark_path):
         raise RunnerError("Missing logo material. Provide --logo-path, or --logo-light-path / --logo-dark-path.")
 
@@ -3408,7 +3350,7 @@ def main() -> int:
             logo_dark_path,
             subtitle_logo_path,
         )
-        if path and not is_within_path(path, BUNDLED_MATERIAL_ROOT)
+        if path
     ]
     asset_preflight_report: Optional[Dict[str, Any]] = None
     if asset_preflight_mode != "off":
@@ -3545,8 +3487,6 @@ def main() -> int:
         "assetManifest": str(asset_manifest_path) if asset_manifest_path else None,
         "assetPreflight": asset_preflight_mode,
         "assetPreflightReport": asset_preflight_report,
-        "useBundledAssets": bool(args.use_bundled_assets),
-        "bundledMaterialRoot": str(BUNDLED_MATERIAL_ROOT) if BUNDLED_MATERIAL_ROOT.exists() else None,
         "size": {"width": width, "height": height, "ratio": args.ratio, "resolution": args.resolution},
         "durationSpecified": bool(duration_specified),
         "visualDuration": round(estimated_duration, 3),
@@ -3608,6 +3548,7 @@ def main() -> int:
         "fontsDir": str(fonts_dir) if fonts_dir else None,
         "bodyFontPath": str(body_font_path) if body_font_path else None,
         "brandFontPath": str(brand_font_path) if brand_font_path else None,
+        "fontPathRequirements": font_path_report,
         "voiceName": args.voice_name,
         "edgeVoice": args.edge_voice,
         "voicePolicy": {

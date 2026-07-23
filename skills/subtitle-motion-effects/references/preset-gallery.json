@@ -8,18 +8,18 @@
   },
   "fonts": [
     {
-      "family": "FZLanTing",
+      "family": "FZLanTingHeiS-DB1-GB",
       "path": "assets/fonts/FZLanTingHei-Medium.ttf"
     },
     {
-      "family": "SodaFont",
+      "family": "Soda Font",
       "path": "assets/fonts/SodaFont-Regular.otf"
     }
   ],
   "branding": {
     "words": ["汽水音乐", "汽水"],
     "style": {
-      "fontFamily": "SodaFont",
+      "fontFamily": "Soda Font",
       "fontSize": 58,
       "fontWeight": 900,
       "color": "#3BFD42",
@@ -30,7 +30,7 @@
     "scale": 1.15
   },
   "defaultStyle": {
-    "fontFamily": "FZLanTing",
+    "fontFamily": "FZLanTingHeiS-DB1-GB",
     "fontSize": 50,
     "fontWeight": 800,
     "strokeColor": "#000000",

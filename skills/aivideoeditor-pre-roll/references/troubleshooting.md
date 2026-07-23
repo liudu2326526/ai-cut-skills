@@ -32,10 +32,14 @@ If validation fails, fix the Manifest before rendering. Do not bypass the Manife
 
 Treat the render as invalid. Every deliverable must have:
 
-- fixed top-left Soda Music logo from a real bundled or caller-provided image
+- fixed top-left Soda Music logo from a real project/workspace image
 - bottom-right visual-only disclaimer
 
 `--no-include-disclaimer-subtitle` is compatibility-only and should not remove the mandatory disclaimer.
+
+## Subtitle font falls back or looks wrong
+
+Production render must receive existing `--body-font-path` and `--brand-font-path` files. `--fonts-dir` alone is insufficient. Confirm that `--body-font-name` and `--brand-font-name` match the selected files' internal family names; for the default pair use `FZLanTingHeiS-DB1-GB` and `Soda Font`. Use absolute paths to avoid resolution against the wrong working directory.
 
 ## Duplicate Logo, Subtitle, Disclaimer, Or Effects
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "AIVideoEditor Pre-roll"
-  short_description: "Create pre-roll videos with required logo assets and selectable voices"
-  default_prompt: "Use $aivideoeditor-pre-roll to create or render a pre-roll video with a real logo asset and optional voice choices."
+  short_description: "Render pre-rolls with explicit logo and font files"
+  default_prompt: "Use $aivideoeditor-pre-roll to render a pre-roll video with real project logo assets and explicit 方正兰亭/Soda font file paths."

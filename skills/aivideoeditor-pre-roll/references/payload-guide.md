@@ -170,7 +170,19 @@ Safe default:
 
 `汽水音乐` and `汽水` should render with `brandFontName`, `brandPrimaryColor`, `brandOutlineColor`, and `brandFontScale`; other main subtitle text should render with `fontName` and the main subtitle colors. The disclaimer is visual-only and defaults to clear white `Microsoft YaHei` with a black outline, unless `disclaimerConfig.fontName` overrides it.
 
-For standalone mode, first search the current project/workspace for `SodaFont-Regular.otf`, 方正兰亭, Soda Music logos, and the subtitle icon, then pass the discovered paths explicitly. If the material root has an unusual name, that is fine; identify it by its contents. If the rendered video still falls back to ordinary fonts, pass `fontsDir`, or pass both `bodyFontPath` and `brandFontPath`.
+For standalone mode, first search the current project/workspace for `SodaFont-Regular.otf`, 方正兰亭, Soda Music logos, and the subtitle icon, then pass the discovered paths explicitly. If the material root has an unusual name, that is fine; identify it by its contents. Production render must include both `bodyFontPath` and `brandFontPath`; `fontsDir` is optional and cannot replace them. Prefer absolute paths, because relative paths resolve from the process working directory.
+
+```json
+{
+  "bodyFontPath": "D:\\assets\\fonts\\方正兰亭中粗黑简体.TTF",
+  "bodyFontName": "FZLanTingHeiS-DB1-GB",
+  "brandFontPath": "D:\\assets\\fonts\\SodaFont-Regular.otf",
+  "brandFontName": "Soda Font",
+  "fontsDir": "D:\\assets\\fonts"
+}
+```
+
+When selecting another 方正兰亭 weight, change `bodyFontPath` and `bodyFontName` together. Do not point to one font file while keeping another file's family name.
 
 If the user says subtitles overflow, lower `fontSize`, use `maxLines: 2`, and increase `safeMarginRatio`.
 
