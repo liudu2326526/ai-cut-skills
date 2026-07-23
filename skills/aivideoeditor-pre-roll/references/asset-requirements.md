@@ -51,9 +51,15 @@ Every deliverable must include that fixed top-left logo and the bottom-right vis
 
 ## Material Strategy
 
-This skill embeds the fixed business package `assets/汽水物料-新`. The bundled package is used by standalone mode for default Soda Music logos, the subtitle-triggered icon, and bundled fonts.
+Use the caller's current project/workspace materials first. The business material folder name is not fixed, so search by content instead of assuming a specific name. Good candidates usually contain some combination of:
 
-Extra caller-provided materials are still external. They must use:
+- Soda Music logo variants or app icons
+- SodaFont and 方正兰亭 font files
+- old/new coin or reward screenshots
+- body/overlay images and insert clips
+- amount templates, balance screenshots, or end-frame/logo assets
+
+After finding the right project material root, pass its real files explicitly as logo/font/icon inputs and sync it into the Manifest when its images/videos will be used for overlay or insert matching. Any material package inside the skill directory is only a compatibility fallback for local experiments.
 
 If the caller wants extra local materials to participate in insertion or overlay matching, they must provide:
 

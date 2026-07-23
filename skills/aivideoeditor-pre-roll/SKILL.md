@@ -1,13 +1,13 @@
 ---
 name: aivideoeditor-pre-roll
-description: Create pre-roll videos with the bundled standalone local runner. Use when Codex needs to preview, troubleshoot, or locally render a pre-roll/front-ad video from ad copy, visual type, asset strategy, subtitle placement, disclaimer text, required logo image assets, auto-selecting light/dark logo variants from background brightness, local asset manifest understanding, or optional Ark/Seedance/TTS credentials and voice choices.
+description: Create pre-roll videos with the standalone local runner. Use when Codex needs to preview, troubleshoot, or locally render a pre-roll/front-ad video from ad copy, visual type, asset strategy, subtitle placement, disclaimer text, required project/workspace logo image assets, auto-selecting light/dark logo variants from background brightness, local asset manifest understanding, or optional Ark/Seedance/TTS credentials and voice choices.
 ---
 
 # AIVideoEditor Pre-roll
 
-Use the bundled standalone local runner. This skill is designed for local rendering without any server connection or login.
+Use the standalone local runner bundled with this skill. This skill is designed for local rendering without any server connection or login.
 
-This skill bundles the fixed business material package `assets/汽水物料-新`. Standalone mode uses that package by default for Soda Music logos, fonts, and the subtitle-triggered Soda icon. Callers can still override or add their own local files/URLs.
+Material assets should come from the caller's current project/workspace first. Do not assume the material folder has any fixed name; search the opened workspace/project and common roots such as `storage/temp`, `assets`, `materials`, `素材`, and `物料` for folders containing real Soda Music logos, SodaFont/方正兰亭 fonts, coin/reward screenshots, and body/overlay materials. Pass the discovered project paths explicitly through `--logo-light-path`, `--logo-dark-path`, `--subtitle-logo-path`, `--fonts-dir`, `--asset-root`, and `--asset-manifest`. Any material package inside the skill directory is only a compatibility fallback for local experiments, not the normal source of business material.
 
 ## Hard Rules
 
@@ -29,12 +29,13 @@ This skill bundles the fixed business material package `assets/汽水物料-新`
 
 For local visual materials, use the same scheme as the main-video Soda Music skill:
 
-1. Run `sync-assets` to scan the caller's asset folder into `pre_roll_assets_manifest.json`.
-2. The executing model must open/read every image and representative video frame that lacks understanding.
-3. Write a concrete Chinese `description` and source-pixel `effective_region` back to each image/video record in the Manifest.
-4. Run `validate` or standalone render preflight. Do not render while the Manifest is missing, `asset_root` differs, a visual asset lacks `description`, a visual asset lacks valid `effective_region`, or a referenced local visual path is not tracked.
-5. When choosing ordinary overlay/insert materials, match by the Manifest `description`, not by filename, folder name, keywords, vectors, or a hidden material pool.
-6. Only match ordinary materials to benefit-point narration. Each selected material item must record `semantic_role=benefit_point` and `matched_benefit_text`.
+1. Locate the caller's project/workspace material folder by content, not by folder name. Prefer folders that contain logo images, SodaFont/方正兰亭 fonts, reward screenshots, and usable image/video overlay materials.
+2. Run `sync-assets` to scan the caller's asset folder into `pre_roll_assets_manifest.json`.
+3. The executing model must open/read every image and representative video frame that lacks understanding.
+4. Write a concrete Chinese `description` and source-pixel `effective_region` back to each image/video record in the Manifest.
+5. Run `validate` or standalone render preflight. Do not render while the Manifest is missing, `asset_root` differs, a visual asset lacks `description`, a visual asset lacks valid `effective_region`, or a referenced local visual path is not tracked.
+6. When choosing ordinary overlay/insert materials, match by the Manifest `description`, not by filename, folder name, keywords, vectors, or a hidden material pool.
+7. Only match ordinary materials to benefit-point narration. Each selected material item must record `semantic_role=benefit_point` and `matched_benefit_text`.
 
 Read these before working with local materials:
 
@@ -105,7 +106,7 @@ Prefer these as the default user-facing form:
 - `visualTemplateId`: `decompression`, `scenery`, `gold_reward`, `chinese_fortune`, `pet_funny`, `ai_lifestyle`, or `ai_beauty_image`.
 - `assetStrategy`: `generated`, `local_video`, `local_image`, or `scraped`.
 - `subtitleConfig.position`: usually `lower_center`.
-- `assetRoot` and `assetManifest`: only required when the caller adds extra local materials outside the bundled `assets/汽水物料-新`.
+- `assetRoot` and `assetManifest`: required when the caller wants project/workspace materials to participate in overlay/insert matching, or when logo/font/icon discovery is ambiguous. The folder name is not fixed; use the discovered material root.
 
 ## Standalone Mode
 
@@ -120,7 +121,7 @@ Standalone mode can:
 - overlay a caller-supplied logo image on every render
 - render the persistent top-left logo with fixed placement and fixed size
 - force the visual-only bottom-right disclaimer on every render, falling back to the default text when a caller passes an empty value
-- use bundled `assets/汽水物料-新` logos/fonts/icons by default
+- use project/workspace Soda Music logos/fonts/icons by passing the discovered real asset paths explicitly
 - optionally place a second logo/icon above subtitle lines that contain `汽水音乐` or `汽水`
 - choose `dark` or `light` logo automatically from the rendered background's overall brightness
 - validate local visual assets against `pre_roll_assets_manifest.json`
@@ -141,7 +142,7 @@ Recommended inputs:
 - `--voiceover-path` or `--local-tts`
 - `--logo-path`, or `--logo-light-path` plus `--logo-dark-path`
 - `--subtitle-logo-path` when you want a specific real icon above subtitles that contain `汽水音乐` or `汽水`
-- `--no-bundled-assets` only when you want to force all logo/font/icon paths to be provided externally
+- `--no-bundled-assets` only as a compatibility/debug option; normal renders should first find project/workspace material paths and pass them explicitly
 - `--no-subtitle-logo-enabled` to disable that subtitle-triggered logo layer
 - `--fonts-dir`, or `--body-font-path` plus `--brand-font-path`
 - `--voice-name` if you want one voice or a small voice pool, for example `VoiceA|VoiceB`
@@ -152,7 +153,7 @@ Recommended inputs:
 - `--disclaimer-text`; this customizes the mandatory bottom-right disclaimer text and cannot disable it
 - `--output`
 
-By default, standalone mode uses the bundled light/dark Soda Music logos and subtitle icon. If you want to replace them, pass `--logo-path`, or pass both `--logo-light-path` and `--logo-dark-path` so the runner can pick the right one for the background. The selected caller-provided logo path must exist in the Manifest when `--asset-preflight required` is active.
+Before rendering, search the current project/workspace for real Soda Music logo variants and the subtitle-triggered icon, then pass those paths explicitly. If both light and dark logo variants are available, pass `--logo-light-path` and `--logo-dark-path` so the runner can pick the right one for the background. The selected caller-provided logo path must exist in the Manifest when `--asset-preflight required` is active. Use skill-directory assets only as a last-resort compatibility fallback for local experiments.
 
 Do not use `--brand-text` as a logo replacement.
 

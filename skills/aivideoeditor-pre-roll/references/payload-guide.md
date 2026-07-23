@@ -33,7 +33,7 @@ All visual prompts should keep material safe: no watermark or AI watermark, sugg
 
 ## Brand Assets
 
-Logo must come from a real caller-provided image or a real server-side logo asset. Do not use typed text as the logo. For automatic contrast, pass both:
+Logo must come from a real project/workspace image asset or a real server-side logo asset. Do not use typed text as the logo. Do not assume the material folder name is fixed; search the opened project/workspace by content and prefer folders that include Soda Music logo variants, app icons, SodaFont/方正兰亭 fonts, and reward/coin materials. For automatic contrast, pass both:
 
 ```json
 {
@@ -78,7 +78,7 @@ For `金币音乐新` screenshots, use small amounts under 10 yuan. Coin arrival
 
 For revisions, choose the cleanest visual source from the previous result and submit that again. Prefer `revisionSourcePath`, `baseVideoPath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, `backgroundVideo`, `backgroundImage`, or the original source URL. Do not pass `finalVideoPath`/`final.mp4` back as `backgroundVideo`, because the final file already has baked-in subtitles, logos, disclaimer text, motion effects, audio mix, and overlays.
 
-For standalone/local runs, local visual files should be paired with `assetRoot` and `assetManifest` so the caller can run the Manifest understanding gate first.
+For standalone/local runs, local visual files should be paired with `assetRoot` and `assetManifest` so the caller can run the Manifest understanding gate first. `assetRoot` should point to the discovered project/workspace material folder; it does not need to have a specific folder name.
 
 For `scraped`, include at least `scrapedVideoType` and one of:
 
@@ -146,7 +146,7 @@ Safe default:
 
 `汽水音乐` and `汽水` should render with `brandFontName`, `brandPrimaryColor`, `brandOutlineColor`, and `brandFontScale`; other main subtitle text should render with `fontName` and the main subtitle colors. The disclaimer is visual-only and defaults to clear white `Microsoft YaHei` with a black outline, unless `disclaimerConfig.fontName` overrides it.
 
-Standalone mode auto-discovers `SodaFont-Regular.otf`, 方正兰亭, Soda Music logos, and the subtitle icon from bundled `assets/汽水物料-新` first. If the rendered video still falls back to ordinary fonts, pass `fontsDir`, or pass both `bodyFontPath` and `brandFontPath`.
+For standalone mode, first search the current project/workspace for `SodaFont-Regular.otf`, 方正兰亭, Soda Music logos, and the subtitle icon, then pass the discovered paths explicitly. If the material root has an unusual name, that is fine; identify it by its contents. If the rendered video still falls back to ordinary fonts, pass `fontsDir`, or pass both `bodyFontPath` and `brandFontPath`.
 
 If the user says subtitles overflow, lower `fontSize`, use `maxLines: 2`, and increase `safeMarginRatio`.
 

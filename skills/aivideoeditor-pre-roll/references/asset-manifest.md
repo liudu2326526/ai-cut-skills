@@ -4,7 +4,7 @@
 
 `scripts/pre_roll_asset_manifest.py sync` scans the caller's asset folder into a workspace-local `pre_roll_assets_manifest.json`.
 
-The Manifest is a runtime cache for caller-provided extra materials in the current workspace. Do not treat a caller Manifest as a replacement for the bundled `assets/汽水物料-新` business package.
+The Manifest is a runtime cache for project/workspace materials used by this render. Do not depend on a fixed material folder name. First search the caller's opened workspace/project for likely material roots, then sync the folder that actually contains usable Soda Music logos, fonts, reward screenshots, and overlay/insert media.
 
 ## What Sync Does
 
@@ -79,7 +79,7 @@ Transparent padding, blank canvas, and pure empty borders do not count as effect
 Sync:
 
 ```powershell
-python scripts\pre_roll_asset_manifest.py sync --workspace "D:\work" --asset-root "D:\work\assets"
+python scripts\pre_roll_asset_manifest.py sync --workspace "D:\work" --asset-root "D:\work\path\to\business-materials"
 ```
 
 Validate:
