@@ -6,6 +6,10 @@
 - `manage-visual-asset-library`：跨项目图片/视频入库、Read 内容理解、有效区域标注、Manifest 校验和语义候选报告。
 - `aivideoeditor-pre-roll`：前贴视频的远程 API 提交与本地渲染，覆盖资产清单、Logo 选择、免责声明和预检。
 - `subtitle-motion-effects`：Remotion 字幕动效层渲染，支持透明字幕层、合成预览和常用字幕特效。
+- `aivideoeditor-usergrowth-automation`：UserGrowth 桌面自动上传工作流，支持指定视频选择、干跑规划、歌曲库匹配、Excel 回填、CID 回填和送审自动化。
+- `mogong-gid-retrieval`：抖音 URL/GID/关键词解析、万邦搜索、魔工创意助手 GID 能力查询、匹配结果导出和可选下载。
+- `douyin-video-toolkit`：抖音视频下载工具集，覆盖页面捕获下载、浏览器视频流采集扩展、万邦/GID 批量下载和诊断输出。
+- `aivideoeditor-video-fission`：本地视频裂变与素材重混工具箱，支持抽帧裂变、前贴排列组合、音视频配对输出和发布包辅助。
 - `edit-soda-music-video`：汽水音乐竖屏数字人口播混剪，覆盖去气口、倍速、字幕、素材、BGM、合规、导出和 QA。
 - `video-motion-effects`：基于 Remotion 的五种图片入场动效，可输出合成视频或透明 ProRes 4444 动效层。
 
@@ -17,6 +21,10 @@ skills/
 ├── manage-visual-asset-library/
 ├── aivideoeditor-pre-roll/
 ├── subtitle-motion-effects/
+├── aivideoeditor-usergrowth-automation/
+├── mogong-gid-retrieval/
+├── douyin-video-toolkit/
+├── aivideoeditor-video-fission/
 ├── edit-soda-music-video/
 └── video-motion-effects/
 ```
@@ -39,6 +47,14 @@ rsync -a --delete ai-cut-skills/skills/aivideoeditor-pre-roll/ "$CODEX_SKILLS/ai
 rsync -a --delete ai-cut-skills/skills/aivideoeditor-pre-roll/ "$WORKBUDDY_SKILLS/aivideoeditor-pre-roll/"
 rsync -a --delete --exclude='node_modules/' ai-cut-skills/skills/subtitle-motion-effects/ "$CODEX_SKILLS/subtitle-motion-effects/"
 rsync -a --delete --exclude='node_modules/' ai-cut-skills/skills/subtitle-motion-effects/ "$WORKBUDDY_SKILLS/subtitle-motion-effects/"
+rsync -a --delete ai-cut-skills/skills/aivideoeditor-usergrowth-automation/ "$CODEX_SKILLS/aivideoeditor-usergrowth-automation/"
+rsync -a --delete ai-cut-skills/skills/aivideoeditor-usergrowth-automation/ "$WORKBUDDY_SKILLS/aivideoeditor-usergrowth-automation/"
+rsync -a --delete ai-cut-skills/skills/mogong-gid-retrieval/ "$CODEX_SKILLS/mogong-gid-retrieval/"
+rsync -a --delete ai-cut-skills/skills/mogong-gid-retrieval/ "$WORKBUDDY_SKILLS/mogong-gid-retrieval/"
+rsync -a --delete --exclude='node_modules/' ai-cut-skills/skills/douyin-video-toolkit/ "$CODEX_SKILLS/douyin-video-toolkit/"
+rsync -a --delete --exclude='node_modules/' ai-cut-skills/skills/douyin-video-toolkit/ "$WORKBUDDY_SKILLS/douyin-video-toolkit/"
+rsync -a --delete ai-cut-skills/skills/aivideoeditor-video-fission/ "$CODEX_SKILLS/aivideoeditor-video-fission/"
+rsync -a --delete ai-cut-skills/skills/aivideoeditor-video-fission/ "$WORKBUDDY_SKILLS/aivideoeditor-video-fission/"
 rsync -a --delete ai-cut-skills/skills/edit-soda-music-video/ "$CODEX_SKILLS/edit-soda-music-video/"
 rsync -a --delete ai-cut-skills/skills/edit-soda-music-video/ "$WORKBUDDY_SKILLS/edit-soda-music-video/"
 rsync -a --delete --exclude='node_modules/' ai-cut-skills/skills/video-motion-effects/ "$CODEX_SKILLS/video-motion-effects/"
