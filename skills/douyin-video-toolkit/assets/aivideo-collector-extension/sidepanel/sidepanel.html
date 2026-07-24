@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>智剪素材采集</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <strong>智剪素材采集</strong>
+      <button id="refresh">刷新</button>
+    </header>
+
+    <section class="settings">
+      <label>API Base<input id="apiBase" placeholder="http://127.0.0.1:6677/api/v1" /></label>
+      <label>项目<select id="projectId"><option value="">请先登录</option></select></label>
+      <div id="authStatus" class="auth-status">认证检测中…</div>
+    </section>
+
+    <main id="videoList" class="video-list"></main>
+
+    <footer>
+      <button id="selectAll">全选</button>
+      <button id="download" disabled>下载选中</button>
+      <button id="clear">清空</button>
+    </footer>
+
+    <div id="status" class="status"></div>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

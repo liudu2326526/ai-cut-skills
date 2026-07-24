@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mogong GID Retrieval"
+  short_description: "Run standalone Douyin GID parsing and Mogong filtering"
+  default_prompt: "Use $mogong-gid-retrieval to parse Douyin GIDs, query Mogong, and export matched results."
