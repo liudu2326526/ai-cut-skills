@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "智剪素材采集",
+  "description": "捕获网页 video/mp4 流并下载到本地、记录到智剪",
+  "version": "0.2.0",
+  "permissions": ["webRequest", "webNavigation", "storage", "tabs", "downloads", "scripting", "sidePanel", "declarativeNetRequest"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background/index.js",
+    "type": "module"
+  },
+  "action": { "default_title": "智剪素材采集" },
+  "side_panel": { "default_path": "sidepanel/sidepanel.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["content-scripts/douyin-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["content-scripts/douyin-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

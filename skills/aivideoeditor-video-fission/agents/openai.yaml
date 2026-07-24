@@ -1,0 +1,6 @@
+interface:
+  display_name: "AIVideoEditor Video Fission"
+  short_description: "Complete local video fission toolbox"
+  default_prompt: "Use $aivideoeditor-video-fission to generate, combine, pair, or package AIVideoEditor video fission materials."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Douyin Video Toolkit"
+  short_description: "Download, capture, and batch process Douyin videos"
+  default_prompt: "Use $douyin-video-toolkit to download or capture Douyin videos."
