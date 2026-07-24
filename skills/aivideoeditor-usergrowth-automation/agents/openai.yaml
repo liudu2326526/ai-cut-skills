@@ -1,0 +1,4 @@
+interface:
+  display_name: "AIVideoEditor UserGrowth Automation"
+  short_description: "Guide desktop UserGrowth upload automation"
+  default_prompt: "Use $aivideoeditor-usergrowth-automation to dry-run selected videos for UserGrowth upload."

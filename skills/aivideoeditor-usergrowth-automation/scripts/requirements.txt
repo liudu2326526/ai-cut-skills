@@ -1,0 +1,5 @@
+openpyxl>=3.1
+requests>=2.31
+ddddocr>=1.5
+onnxruntime>=1.17
+playwright>=1.52
