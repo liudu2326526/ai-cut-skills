@@ -463,6 +463,8 @@ const parseStringList = (value) => {
     .filter((item) => item.length > 0);
 };
 
+const stripRenderedSubtitlePunctuation = (value) => String(value ?? '').replace(/\p{P}/gu, '');
+
 const numberOrNull = (value, field) => {
   if (value == null) return null;
   const number = Number(value);
@@ -657,7 +659,8 @@ const normalizeTokenTimings = ({rawCue, rootFrontend, cueStart, cueEnd, cueText,
     if (!token || typeof token !== 'object') {
       throw new SubtitleMotionError(`subtitles[${index}].tokens[${tokenIndex}] must be an object`);
     }
-    const text = String(token.text ?? token.word ?? token.value ?? '').trim();
+    const sourceText = String(token.text ?? token.word ?? token.value ?? '').trim();
+    const text = stripRenderedSubtitlePunctuation(sourceText).trim();
     if (!text) return null;
     const startRaw = timeValueOrNull(
       token,
@@ -674,6 +677,7 @@ const normalizeTokenTimings = ({rawCue, rootFrontend, cueStart, cueEnd, cueText,
     }
     return {
       text,
+      sourceText,
       startRaw,
       endRaw,
       style: normalizeStyle(token.style ?? {}),
@@ -888,8 +892,10 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
   }
   const subtitles = rawSubtitles.map((cue, index) => {
     if (!cue || typeof cue !== 'object') throw new SubtitleMotionError(`subtitles[${index}] must be an object`);
-    const text = String(cue.text ?? '').trim();
-    if (!text) throw new SubtitleMotionError(`subtitles[${index}].text is required`);
+    const sourceText = String(cue.text ?? '').trim();
+    if (!sourceText) throw new SubtitleMotionError(`subtitles[${index}].text is required`);
+    const text = stripRenderedSubtitlePunctuation(sourceText).trim();
+    if (!text) throw new SubtitleMotionError(`subtitles[${index}].text becomes empty after punctuation removal`);
     const start = Number(cue.start);
     const end = Number(cue.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
@@ -910,16 +916,17 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
     const cueStylePresetName = cue.stylePreset ?? cue.style_preset;
     const cueStylePreset = resolveStylePreset(cueStylePresetName, `subtitles[${index}].stylePreset`);
     const style = normalizeStyle(cue.style ?? {}, {...defaultStyle, ...cueStylePreset});
-    const rawSpans = Array.isArray(cue.spans) && cue.spans.length > 0
+    const manualSpans = Array.isArray(cue.spans) && cue.spans.length > 0
       ? cue.spans.map((span, spanIndex) => {
           if (!span || typeof span !== 'object') {
             throw new SubtitleMotionError(`subtitles[${index}].spans[${spanIndex}] must be an object`);
           }
-          const spanText = String(span.text ?? '');
-          if (!spanText) throw new SubtitleMotionError(`subtitles[${index}].spans[${spanIndex}].text is required`);
+          const spanText = stripRenderedSubtitlePunctuation(String(span.text ?? ''));
+          if (!spanText) return null;
           return {text: spanText, style: normalizeStyle(span.style ?? {})};
-      })
-      : makeBrandSpans(text, raw.branding ?? {}, style);
+      }).filter(Boolean)
+      : [];
+    const rawSpans = manualSpans.length > 0 ? manualSpans : makeBrandSpans(text, raw.branding ?? {}, style);
     const spans = applyBrandingToSpans(rawSpans, raw.branding ?? {}, style);
     const tokenTimings = normalizeTokenTimings({
       rawCue: cue,
@@ -951,6 +958,8 @@ const normalizeTimeline = ({timelinePath, assetRoot, inputPath, mode}) => {
       start,
       end,
       text,
+      sourceText,
+      punctuationStripped: sourceText !== text,
       position,
       x: numberOrNull(cue.x, `subtitles[${index}].x`) ?? undefined,
       y: numberOrNull(cue.y, `subtitles[${index}].y`) ?? undefined,

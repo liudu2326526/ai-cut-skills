@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -1485,6 +1486,11 @@ def ass_escape(text: str) -> str:
     return str(text or "").replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
 
 
+def strip_rendered_subtitle_punctuation(text: str) -> str:
+    # 只处理最终显示的字幕，不影响口播文本、分段和时间轴。
+    return "".join(ch for ch in str(text or "") if not unicodedata.category(ch).startswith("P"))
+
+
 def ass_inline_color(value: Optional[str], default_value: str) -> str:
     raw = str(value or default_value or "").strip()
     if not raw:
@@ -1658,15 +1664,16 @@ def generate_ass(
     if supplied_events:
         for item in supplied_events:
             chunk = str(item.get("text") or "").strip()
+            display_chunk = strip_rendered_subtitle_punctuation(chunk).strip()
             event_start = max(0.0, min(duration - 0.05, float(item.get("start") or 0.0) + float(subtitle_offset or 0.0)))
             raw_end = float(item.get("end") or event_start + 0.45) + float(subtitle_offset or 0.0)
             event_end = max(event_start + 0.05, min(duration, raw_end))
-            if include_main_subtitles:
+            if include_main_subtitles and display_chunk:
                 lines.append(
                     f"Dialogue: 5,{ass_time(event_start)},{ass_time(event_end)},Main,,0,0,0,,"
-                    f"{ass_escape_with_brand_font(chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
+                    f"{ass_escape_with_brand_font(display_chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
                 )
-            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": chunk})
+            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": display_chunk, "sourceText": chunk})
     else:
         total_weight = sum(max(1, len(chunk)) for chunk in chunks) or 1
         cursor = float(subtitle_offset or 0.0)
@@ -1681,12 +1688,13 @@ def generate_ass(
                 end = min(duration, cursor + 0.45)
             event_start = max(0.0, cursor)
             event_end = max(event_start + 0.05, min(duration, end))
-            if include_main_subtitles:
+            display_chunk = strip_rendered_subtitle_punctuation(chunk).strip()
+            if include_main_subtitles and display_chunk:
                 lines.append(
                     f"Dialogue: 5,{ass_time(event_start)},{ass_time(event_end)},Main,,0,0,0,,"
-                    f"{ass_escape_with_brand_font(chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
+                    f"{ass_escape_with_brand_font(display_chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
                 )
-            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": chunk})
+            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": display_chunk, "sourceText": chunk})
             cursor = end
             if cursor >= duration - 0.05:
                 break
@@ -1707,6 +1715,7 @@ def generate_ass(
         "events": events,
         "subtitleText": text,
         "mainSubtitleBurned": bool(include_main_subtitles),
+        "renderedTextPunctuationStripped": True,
         "timingSource": subtitle_timing_source or ("audio_pause_boundaries" if supplied_events else "text_weighted"),
         "voiceoverText": text,
         "exactTextPolicy": "main subtitles use the same scriptText sent to local/provided voiceover preparation",
