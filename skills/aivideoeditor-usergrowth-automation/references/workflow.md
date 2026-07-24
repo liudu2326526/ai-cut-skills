@@ -12,6 +12,8 @@ A run is described by `UserGrowthRunConfig`:
 - `order_id`: required; currently all active scanned items use this order ID.
 - `task_name`, `month_tag`, `recursive`, `dry_run`, `headless`, `max_status_retries`, `refresh_interval_seconds`, `browser_slow_mo_ms`.
 
+For the standalone CLI, dry-run/live mode is controlled only by the current command: both `--live` and `--confirm-live` are required for a real upload. A manifest cannot switch the run into live mode.
+
 ## Single Run
 
 The standalone skill CLI uses `run_selected_usergrowth_task` in `scripts/usergrowth_upload.py` when specific videos are requested. The original desktop runner uses `run_usergrowth_task(config, progress, cancel_event)` for whole-folder runs.
@@ -37,7 +39,9 @@ The original whole-folder flow performs:
 
 ## Planning
 
-`build_usergrowth_plan` scans videos, detects material type from filenames, extracts song names, loads song records, attaches song data, attaches order ID, and groups non-skipped items by order.
+`build_usergrowth_plan` scans videos, detects material type from filenames, extracts song names, loads song records, attaches song data, and attaches order ID. It then groups non-skipped items by `(order_id, classification_path, custom_tags)`.
+
+This grouping is intentionally stricter than order-only grouping: the browser fills one card and uses `一键复用` for the rest of that plan, so every item in a plan must have the same complete card defaults. One order may therefore produce several sequential plans.
 
 VIP/SVIP materials skip song matching and do not append a song ID tag. Blocked songs become `skipped`. Missing song ID or duplicate song candidates do not skip upload; they keep custom tags without the song ID and carry a warning message.
 

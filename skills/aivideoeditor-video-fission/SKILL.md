@@ -84,8 +84,10 @@ python C:\Users\Donson\.codex\skills\aivideoeditor-video-fission\scripts\release
 
 - Generate `target-count` variants per source video.
 - Delete random discrete frames per second, not a continuous time span.
+- Never delete the first or last source frame. Preserve source presentation timestamps so frame deletion does not compress the main video timeline.
 - Avoid duplicate frame signatures per source when possible.
 - Pick cover candidates from separated timestamps and prepend a short still intro segment.
+- When the source has audio, prepend silence equal to the still-cover hold, re-encode the filtered audio, and trim audio/video together so the result stays synchronized.
 - Prefer distinct covers using average-hash distance when `Pillow` is available.
 
 ### 前贴排列组合

@@ -20,7 +20,12 @@ from usergrowth_automation.usergrowth_models import (
     UserGrowthRunConfig,
     UserGrowthVideoItem,
 )
-from usergrowth_automation.usergrowth_planner import _attach_order, _attach_song, scan_video_files
+from usergrowth_automation.usergrowth_planner import (
+    _attach_order,
+    _attach_song,
+    group_usergrowth_items,
+    scan_video_files,
+)
 from usergrowth_automation.usergrowth_rules import (
     classification_path_for_material,
     detect_material_type,
@@ -53,8 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not video_paths:
             raise RuntimeError("没有选中任何视频。请使用 --video/--video-glob/--video-list，或显式传 --all-videos。")
-        if not config.dry_run and not (args.confirm_live or manifest.get("confirm_live")):
-            raise RuntimeError("正式上传需要同时传 --live --confirm-live。")
+        _validate_live_mode(args, config)
         if not config.dry_run and (not config.account or not config.password):
             raise RuntimeError("正式上传需要账号密码。可用 --account/--password 或 USERGROWTH_ACCOUNT/USERGROWTH_PASSWORD。")
 
@@ -123,7 +127,8 @@ def _config_from_args(args: argparse.Namespace, manifest: dict[str, Any], base_d
     )
     song_excel = _required_path(_pick(args.song_excel, manifest, "song_excel"), base_dir, "song_excel")
     output_root = _required_path(_pick(args.output_root, manifest, "output_root"), base_dir, "output_root")
-    dry_run = not bool(args.live or manifest.get("live") or manifest.get("dry_run") is False)
+    # 正式上传只能由当前命令行显式开启；manifest 永远不能把预检升级为实跑。
+    dry_run = not bool(args.live)
     recursive = args.recursive if args.recursive is not None else bool(manifest.get("recursive", True))
     return UserGrowthRunConfig(
         video_folder=video_folder,
@@ -142,6 +147,14 @@ def _config_from_args(args: argparse.Namespace, manifest: dict[str, Any], base_d
         refresh_interval_seconds=float(_pick(args.refresh_interval_seconds, manifest, "refresh_interval_seconds") or 12.0),
         browser_slow_mo_ms=int(_pick(args.browser_slow_mo_ms, manifest, "browser_slow_mo_ms") or 600),
     )
+
+
+def _validate_live_mode(args: argparse.Namespace, config: UserGrowthRunConfig) -> None:
+    """要求当前命令同时提供两个实跑开关，禁止 manifest 代替人工确认。"""
+    if config.dry_run:
+        return
+    if not args.live or not args.confirm_live:
+        raise RuntimeError("正式上传需要在当前命令中同时传 --live --confirm-live。")
 
 
 def _pick(value: Any, manifest: dict[str, Any], *keys: str) -> Any:
@@ -394,25 +407,7 @@ def build_selected_usergrowth_plan(
         _attach_order(item, default_order_id)
         items.append(item)
 
-    grouped: dict[str, list[UserGrowthVideoItem]] = defaultdict(list)
-    skipped_items: list[UserGrowthVideoItem] = []
-    for item in items:
-        if item.status == "skipped" or not item.order_id:
-            skipped_items.append(item)
-            continue
-        grouped[item.order_id].append(item)
-
-    plans = [UserGrowthOrderPlan(order_id=order_id, items=group_items) for order_id, group_items in grouped.items()]
-    if skipped_items:
-        plans.append(
-            UserGrowthOrderPlan(
-                order_id="未分配/跳过",
-                items=skipped_items,
-                status="skipped",
-                message="这些素材不会进入上传流程",
-            )
-        )
-    return plans, items
+    return group_usergrowth_items(items), items
 
 
 def _public_payload(payload: dict) -> dict:
@@ -448,7 +443,7 @@ def _write_task_error(
         (task_root / "error.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         lines = [
             f"timestamp: {timestamp}",
-            f"status: failed",
+            "status: failed",
             f"mode: {payload['mode']}",
             f"error_type: {type(exc).__name__}",
             f"error_message: {exc}",

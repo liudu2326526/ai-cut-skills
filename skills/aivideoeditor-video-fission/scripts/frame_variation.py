@@ -4,7 +4,6 @@ import argparse
 import csv
 import hashlib
 import json
-import math
 import os
 import random
 import shutil
@@ -320,6 +319,7 @@ def build_one_variant(
             args.height,
             args.resize_mode,
             ffmpeg,
+            has_audio=source.has_audio,
         )
         selected_covers.append(cover)
         used_signatures.add(signature)
@@ -352,6 +352,9 @@ def choose_deleted_frames_per_second(fps: float, frame_count: int, frames_per_se
     for second in range(seconds):
         start = int(round(second * fps))
         end = min(frame_count, int(round((second + 1) * fps)))
+        # 保留首尾帧，避免删帧改变主视频的时间原点或结尾时间。
+        start = max(start, 1)
+        end = min(end, frame_count - 1)
         if end <= start:
             continue
         candidates = list(range(start, end))
@@ -500,17 +503,28 @@ def render_frame_drop_variant_with_cover(
     height: int,
     resize_mode: str,
     ffmpeg: str,
+    has_audio: bool = True,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     conditions = "+".join(f"eq(n\\,{frame})" for frame in sorted(set(deleted_frames)))
     drop_expr = f"not({conditions})" if conditions else "1"
-    filter_complex = (
-        f"[0:v:0]trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={hold_seconds:.3f}[cover];"
-        f"[1:v:0]select='{drop_expr}',setpts=N/FRAME_RATE/TB[main];"
-        "[cover][main]concat=n=2:v=1:a=0[merged];"
-        f"[merged]{output_video_filter(width, height, resize_mode)}[vout]"
-    )
-    run_process([
+    hold_seconds = max(0.001, float(hold_seconds))
+    filter_parts = [
+        (
+            "[0:v:0]trim=end_frame=1,setpts=PTS-STARTPTS,"
+            f"tpad=stop_mode=clone:stop_duration={hold_seconds:.3f},"
+            f"trim=duration={hold_seconds:.3f}[cover]"
+        ),
+        f"[1:v:0]select='{drop_expr}',setpts=PTS-STARTPTS[main]",
+        "[cover][main]concat=n=2:v=1:a=0[merged]",
+        f"[merged]{output_video_filter(width, height, resize_mode)}[vout]",
+    ]
+    if has_audio:
+        delay_ms = max(1, int(round(hold_seconds * 1000)))
+        filter_parts.append(f"[1:a:0]asetpts=PTS-STARTPTS,adelay={delay_ms}:all=1[aout]")
+    filter_complex = ";".join(filter_parts)
+
+    command = [
         ffmpeg,
         "-y",
         "-ss",
@@ -523,8 +537,6 @@ def render_frame_drop_variant_with_cover(
         filter_complex,
         "-map",
         "[vout]",
-        "-map",
-        "1:a?",
         "-c:v",
         "libx264",
         "-preset",
@@ -533,12 +545,23 @@ def render_frame_drop_variant_with_cover(
         "24",
         "-force_key_frames",
         "0",
-        "-c:a",
-        "copy",
+    ]
+    if has_audio:
+        command.extend([
+            "-map",
+            "[aout]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+        ])
+    command.extend([
         "-movflags",
         "+faststart",
         str(output_path),
     ])
+    run_process(command)
 
 
 def write_outputs(task_root: Path, payload: dict[str, Any], variants: list[VariantPlan]) -> None:

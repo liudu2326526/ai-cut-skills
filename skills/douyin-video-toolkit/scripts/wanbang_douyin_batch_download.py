@@ -5,6 +5,8 @@ import csv
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -225,18 +227,61 @@ def download_file(url: str, target_path: Path, *, referer: str = "https://www.do
         },
     )
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = target_path.with_suffix(target_path.suffix + ".part")
+    part_path.unlink(missing_ok=True)
     size = 0
-    with urllib.request.urlopen(request, timeout=180) as response:
-        with target_path.open("wb") as file:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                file.write(chunk)
-                size += len(chunk)
-    if size <= 0:
-        raise RuntimeError("Downloaded video file is empty")
-    return size
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            with part_path.open("wb") as file:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    file.write(chunk)
+                    size += len(chunk)
+        if not validate_mp4_file(part_path):
+            raise RuntimeError("Downloaded video failed MP4 validation")
+        part_path.replace(target_path)
+        return target_path.stat().st_size
+    except BaseException:
+        part_path.unlink(missing_ok=True)
+        raise
+
+
+def validate_mp4_file(path: Path) -> bool:
+    """验证文件至少具有 MP4 头，并在可用时通过 ffprobe 检查时长。"""
+    try:
+        if not path.is_file() or path.stat().st_size < 1024:
+            return False
+        with path.open("rb") as file:
+            if b"ftyp" not in file.read(64):
+                return False
+    except OSError:
+        return False
+
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return True
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0 and float(result.stdout.strip() or 0) > 0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
 
 
 def dedupe_references(references: list[VideoReference]) -> list[VideoReference]:
@@ -307,7 +352,7 @@ def main() -> None:
     parser.add_argument("--max-per-keyword", type=int, default=12)
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--no-download", action="store_true", help="Only resolve/query references and write summaries.")
-    parser.add_argument("--skip-existing", action="store_true", help="Reuse existing <gid>.mp4 files.")
+    parser.add_argument("--skip-existing", action="store_true", help="Reuse only existing <gid>.mp4 files that pass validation.")
     parser.add_argument("--sleep", type=float, default=0.0, help="Seconds to wait between videos.")
     parser.add_argument("--api-key", default=os.getenv("WANBANG_API_KEY", ""))
     parser.add_argument("--api-secret", default=os.getenv("WANBANG_API_SECRET", ""))
@@ -338,7 +383,7 @@ def main() -> None:
         try:
             if args.no_download:
                 results.append(DownloadResult(ref.source, ref.gid, ref.video_url, "resolved", keyword=ref.keyword))
-            elif args.skip_existing and target.exists() and target.stat().st_size > 0:
+            elif args.skip_existing and validate_mp4_file(target):
                 results.append(
                     DownloadResult(
                         ref.source,
@@ -351,6 +396,8 @@ def main() -> None:
                     )
                 )
             else:
+                if args.skip_existing and target.exists():
+                    append_log(log_path, f"item_existing_invalid index={index} gid={ref.gid} path={target.resolve()}")
                 if client is None:
                     raise RuntimeError("Wanbang credentials are required for downloading.")
                 direct_url = client.video_download_url(ref.gid)

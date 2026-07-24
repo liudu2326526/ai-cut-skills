@@ -11,7 +11,7 @@ from typing import Callable, Iterable
 
 from .usergrowth_captcha import UserGrowthCaptchaSolver
 from .usergrowth_models import UserGrowthCancelled, UserGrowthOrderPlan, UserGrowthVideoItem
-from .usergrowth_rules import display_material_from_label, custom_tags_for_material, classification_path_for_material
+from .usergrowth_rules import display_material_from_label
 
 ProgressCallback = Callable[[str], None]
 OrderCompleteCallback = Callable[[UserGrowthOrderPlan], None]
@@ -24,6 +24,14 @@ def _compact_text(value: str) -> str:
 
 def _compact_cascader_text(value: str) -> str:
     return re.sub(r"[\s\u00a0_]+", "", value or "")
+
+
+def card_defaults_for_item(item: UserGrowthVideoItem) -> tuple[list[str], list[str]]:
+    """返回计划阶段确定的分类和标签，避免浏览器阶段按文件名重新推导。"""
+    classification_path = [str(value).strip() for value in item.classification_path if str(value).strip()]
+    if not classification_path:
+        raise RuntimeError(f"素材缺少已规划的分类标签：{item.file_name}")
+    return ["LUNA功能卖点", *classification_path], list(item.custom_tags)
 
 
 LOGIN_URL = "https://usergrowth.com.cn/open/login"
@@ -1343,10 +1351,8 @@ class UserGrowthBrowserClient:
         )
         await self._select_cascader(page, "LUNA素材来源", ["LUNA素材来源", "LUNA_千沧代理"])
 
-        print(f"匹配到的类型{classification_path_for_material(item.file_name)}")
-        path = classification_path_for_material(item.file_name)
-        # 最前面的LUNA功能卖点点上
-        path.insert(0, "LUNA功能卖点")
+        path, tags = card_defaults_for_item(item)
+        print(f"计划中的分类标签{path}")
         await self._select_cascader(
             page,
             "LUNA功能卖点",
@@ -1356,13 +1362,7 @@ class UserGrowthBrowserClient:
         await self._click_if_present(page, "确定")
 
         # 填入自定义标签
-        tags = custom_tags_for_material(
-            item.material_type,
-            item.song_id,
-            item.file_name,
-        )
-
-        print(f"自定义标签集合{tags}")
+        print(f"计划中的自定义标签集合{tags}")
 
         for tag in tags:
             input_box = await self._inputtag_for_field(page, "自定义标签")

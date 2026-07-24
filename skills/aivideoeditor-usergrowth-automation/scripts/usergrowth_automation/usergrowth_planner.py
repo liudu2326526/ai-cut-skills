@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 
 from .usergrowth_excel import load_song_records, match_song_record
@@ -61,18 +60,41 @@ def build_usergrowth_plan(
         _attach_order(item, default_order_id)
         items.append(item)
 
-    grouped: dict[str, list[UserGrowthVideoItem]] = defaultdict(list)
+    return group_usergrowth_items(items), items
+
+
+def group_usergrowth_items(items: list[UserGrowthVideoItem]) -> list[UserGrowthOrderPlan]:
+    """按订单和整卡默认值分批，避免“一键复用”覆盖异构素材。"""
+    grouped: dict[
+        tuple[str, tuple[str, ...], tuple[str, ...]],
+        list[UserGrowthVideoItem],
+    ] = {}
     skipped_items: list[UserGrowthVideoItem] = []
     for item in items:
         if item.status == "skipped" or not item.order_id:
             skipped_items.append(item)
             continue
-        grouped[item.order_id].append(item)
+        profile = (
+            item.order_id,
+            tuple(item.classification_path),
+            tuple(item.custom_tags),
+        )
+        grouped.setdefault(profile, []).append(item)
 
-    plans = [UserGrowthOrderPlan(order_id=order_id, items=items) for order_id, items in grouped.items()]
+    plans = [
+        UserGrowthOrderPlan(order_id=order_id, items=group_items)
+        for (order_id, _classification_path, _custom_tags), group_items in grouped.items()
+    ]
     if skipped_items:
-        plans.append(UserGrowthOrderPlan(order_id="未分配/跳过", items=skipped_items, status="skipped", message="这些素材不会进入上传流程"))
-    return plans, items
+        plans.append(
+            UserGrowthOrderPlan(
+                order_id="未分配/跳过",
+                items=skipped_items,
+                status="skipped",
+                message="这些素材不会进入上传流程",
+            )
+        )
+    return plans
 
 
 def _attach_song(item: UserGrowthVideoItem, song_records, month_tag: str) -> None:

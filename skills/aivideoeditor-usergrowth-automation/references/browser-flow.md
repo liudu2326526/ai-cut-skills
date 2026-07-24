@@ -34,19 +34,20 @@ Upload retry has two layers:
 
 After upload cards are ready, the browser clicks `继续编辑`, `确认提交`, selects all creative units, clicks `录入素材`, waits for a page containing `投放平台`/`汽水音乐`, confirms the delivery modal, then calls `_fill_card_defaults(page, items[0])`.
 
-Important current assumptions:
+Batch guarantees:
 
-- Only `items[0]` drives the card defaults; `一键复用` applies that same setup to the whole selected batch.
-- `_fill_card_defaults` recomputes `classification_path_for_material(item.file_name)` and `custom_tags_for_material(item.material_type, item.song_id, item.file_name)` instead of using `item.classification_path` and `item.custom_tags`.
-- Because no `month_tag` is passed in `_fill_card_defaults`, live browser tags use the current default month, while planner/preview/backfill can use `config.month_tag`. Fix this before relying on a custom month tag.
+- The planner splits one order into separate plans for each distinct `(classification_path, custom_tags)` profile.
+- `items[0]` drives the card defaults only after that homogeneous grouping; `一键复用` therefore applies the same intended values to the whole plan.
+- `_fill_card_defaults` consumes `item.classification_path` and `item.custom_tags` directly. It must not recompute them from the filename.
+- A caller-supplied `month_tag` is already part of the planned custom tags and is preserved in live browser entry.
 
 Default form choices:
 
 - `请选择UGC内容` -> `不包含`.
 - Cascader `汽水音乐-素材类型` -> `汽水音乐-素材类型 / LUNA_剪辑制作 / LUNA_自产`.
 - Cascader `LUNA素材来源` -> `LUNA素材来源 / LUNA_千沧代理`.
-- Cascader `LUNA功能卖点` -> `LUNA功能卖点 / <classification_path_for_material(file)>`.
-- Custom tags from `custom_tags_for_material`.
+- Cascader `LUNA功能卖点` -> `LUNA功能卖点 / <item.classification_path>`.
+- Custom tags from `item.custom_tags`.
 - Radio `未成年人内容` -> `已授权`.
 - Radio `影视内容` -> `已授权`.
 - `一键复用` -> `全选` -> `一键复用` -> `提交` -> `查看任务详情`.

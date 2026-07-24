@@ -80,6 +80,8 @@ Run it:
 
 Do not put passwords in manifests unless the user explicitly asks for that storage pattern. Prefer environment variables.
 
+Manifest values such as `"live": true`, `"confirm_live": true`, or `"dry_run": false` never activate a real upload. Without both command-line flags in the current invocation, the CLI remains in dry-run mode.
+
 ## Live Upload
 
 Live upload writes successful orders directly back to the original backfill Excel and submits review on UserGrowth. Only run live after explicit user confirmation:

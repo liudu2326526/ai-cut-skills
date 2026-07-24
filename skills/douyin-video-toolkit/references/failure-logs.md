@@ -47,6 +47,8 @@ Expected files:
 - `<out-dir>/summary.csv`
 - `<out-dir>/<gid>.mp4` for `downloaded` or `reused` items
 
+Wanbang downloads use `<gid>.mp4.part` while bytes are still arriving. On success, the tool validates the MP4 and atomically replaces `<gid>.mp4`; on failure or interruption it removes the `.part` file. `--skip-existing` reuses only a file with an MP4 header and, when `ffprobe` is available, a positive readable duration. A nonempty but invalid final file is logged as `item_existing_invalid` and downloaded again.
+
 Read `summary.json` when:
 
 - a subset failed and the batch continued
@@ -90,5 +92,4 @@ If local download succeeds but record sync fails, keep the downloaded browser fi
 - For stale CDN URLs, replay/refresh the Douyin page and recapture.
 - For login/captcha/session issues, rerun Playwright with `--headed` or use the browser collector.
 - For Wanbang API failures, retry failed GIDs from `summary.json`; keep the previous summary for audit.
-- For incomplete MP4 files, compare file size with `summary.json` or extension candidate size, then recapture at the desired player quality.
-
+- For incomplete MP4 files, do not treat nonzero file size as proof of completion. Check MP4 validation/`ffprobe`, compare file size with `summary.json` or extension candidate size, then recapture at the desired player quality.

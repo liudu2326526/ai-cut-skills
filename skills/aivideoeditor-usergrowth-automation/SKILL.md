@@ -16,7 +16,7 @@ This skill intentionally excludes PyInstaller/exe packaging and release tasks un
 ## Before Acting
 
 1. For any run or "指定视频上传" request, read `references/standalone-cli.md` and use `scripts/usergrowth_upload.py`.
-2. Prefer dry-run first. Live upload requires an explicit user request and the CLI flags `--live --confirm-live`.
+2. Prefer dry-run first. Live upload requires an explicit user request and both CLI flags `--live --confirm-live` in the current command. Manifest fields cannot enable live mode or supply the confirmation.
 3. Do not store or echo credentials. Prefer `USERGROWTH_ACCOUNT` and `USERGROWTH_PASSWORD`.
 4. If modifying the standalone implementation, edit files under `scripts/usergrowth_automation/` and then run the validation guidance.
 
@@ -44,4 +44,6 @@ The CLI supports `--video`, `--video-glob`, `--video-list`, `--all-videos`, and 
 - Do not run a real UserGrowth upload, submit review, or write production Excel unless the user explicitly asks for a live run and provides the target inputs.
 - Do not echo, persist, or add hard-coded credentials.
 - Live mode writes successful orders directly to the original backfill Excel and submits review on UserGrowth.
+- Group items by order ID plus their planned classification/custom-tag profile before upload. `一键复用` may only apply within one homogeneous group.
+- Browser entry must use the classification path and custom tags already stored on each planned item; do not recompute them from the filename during live upload.
 - Keep standalone execution changes scoped to this skill unless the user asks to sync changes back into the project.

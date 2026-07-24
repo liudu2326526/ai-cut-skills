@@ -115,7 +115,7 @@ python C:\Users\Donson\.codex\skills\douyin-video-toolkit\scripts\wanbang_douyin
   --out-dir ".\downloads\douyin-keyword"
 ```
 
-Use `--no-download` to resolve/query only, `--skip-existing` to reuse existing `<gid>.mp4`, and `--sleep` to wait between videos. Outputs are `<gid>.mp4`, `run.log`, `summary.json`, and `summary.csv`. Read `references/wanbang-contract.md` before changing API parsing.
+Use `--no-download` to resolve/query only, `--skip-existing` to reuse an existing `<gid>.mp4` only after MP4 validation, and `--sleep` to wait between videos. Downloads first write `<gid>.mp4.part`; only a validated complete file is atomically renamed to `<gid>.mp4`. Outputs are `<gid>.mp4`, `run.log`, `summary.json`, and `summary.csv`. Read `references/wanbang-contract.md` before changing API parsing.
 
 ## Failure And Logs
 
