@@ -1,6 +1,6 @@
 ---
 name: douyin-video-toolkit
-description: Standalone Douyin video toolkit for downloading, browser-capturing, and batch-processing Douyin videos. Use when Codex needs to download one or many Douyin URLs, modal_id/gid/v.douyin.com short links, capture browser video/mp4 streams with a Chrome/Edge MV3 extension, package the collector extension, call Wanbang item_get_video or item_search_video for GID/keyword batch downloads, process TXT/CSV/XLSX URL or keyword lists, or troubleshoot Douyin CDN Referer, aweme ID mapping, stale stream, and capture diagnostics without depending on the AIVideoEditor backend.
+description: Standalone Douyin video toolkit for downloading, browser-capturing, batch-processing, and diagnosing Douyin videos. Use when Codex needs to download one or many Douyin URLs, modal_id/gid/v.douyin.com short links, capture browser video/mp4 streams with a Chrome/Edge MV3 extension, package the collector extension, call Wanbang item_get_video or item_search_video for GID/keyword batch downloads, process TXT/CSV/XLSX URL or keyword lists, inspect run.log/summary.json/_captures failure logs after failed or interrupted tasks, or troubleshoot Douyin CDN Referer, aweme ID mapping, stale stream, incomplete MP4, and capture diagnostics without depending on the AIVideoEditor backend.
 ---
 
 # Douyin Video Toolkit
@@ -48,7 +48,7 @@ python C:\Users\Donson\.codex\skills\douyin-video-toolkit\scripts\download_douyi
 
 Use `--headed` for login, captcha, or visual debugging. The script supports `/video/<id>`, `/share/video/<id>`, `modal_id`, `gid`, `video_id`, `item_id`, `aweme_id`, `v.douyin.com` redirects, and Chameleon open API video URLs.
 
-Outputs include MP4 files, `summary.json`, and `_captures/*.json` diagnostics. Read `references/capture-model.md` before changing candidate extraction or quality selection.
+Outputs include MP4 files, `run.log`, `summary.json`, and `_captures/*.json` diagnostics. Read `references/capture-model.md` before changing candidate extraction or quality selection.
 
 ## Browser Collector Extension
 
@@ -115,9 +115,18 @@ python C:\Users\Donson\.codex\skills\douyin-video-toolkit\scripts\wanbang_douyin
   --out-dir ".\downloads\douyin-keyword"
 ```
 
-Use `--no-download` to resolve/query only, `--skip-existing` to reuse existing `<gid>.mp4`, and `--sleep` to wait between videos. Outputs are `<gid>.mp4`, `summary.json`, and `summary.csv`. Read `references/wanbang-contract.md` before changing API parsing.
+Use `--no-download` to resolve/query only, `--skip-existing` to reuse existing `<gid>.mp4`, and `--sleep` to wait between videos. Outputs are `<gid>.mp4`, `run.log`, `summary.json`, and `summary.csv`. Read `references/wanbang-contract.md` before changing API parsing.
+
+## Failure And Logs
+
+For CLI runs, inspect the selected `--out-dir` first. Start with `run.log`, then `summary.json`, then any workflow-specific files:
+
+- Playwright page capture: `_captures/NN_<video_id>.json` and `_captures/NN_<video_id>.png`.
+- Wanbang/GID batch: `summary.csv` and each `<gid>.mp4`.
+- Browser collector: extension side panel status, browser downloads page, extension service worker console, and current tab DevTools console.
+
+Read `references/failure-logs.md` whenever a task fails, is interrupted, or produces incomplete output.
 
 ## Safety And Limits
 
 Use only content the user is authorized to download. These tools capture normal browser-accessible streams or normal API/video URLs and do not bypass DRM.
-

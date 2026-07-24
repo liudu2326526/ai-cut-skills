@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -64,71 +65,85 @@ class VariantPlan:
 
 def main() -> int:
     args = parse_args()
-    ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
-    ffprobe = resolve_binary("ffprobe", args.ffprobe)
-    input_folder = Path(args.input_folder).resolve()
-    if not input_folder.is_dir():
-        raise SystemExit(f"Input folder does not exist: {input_folder}")
-
     task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     task_root = Path(args.output_root).resolve() / task_id
     videos_dir = task_root / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
+    run_log = task_root / "run.log"
+    log_event(run_log, f"start paired_media_match task_id={task_id}")
+    log_event(run_log, f"config={json.dumps(vars(args), ensure_ascii=False)}")
 
-    scan = scan_pairable_media_folder(input_folder, ffprobe)
     variants: list[VariantPlan] = []
     failures: list[dict[str, str]] = []
-    used_names: set[str] = set()
-    for index, pair in enumerate(scan["pairs"], start=1):
-        output_name = build_pair_output_name(pair["pair_id"], used_names)
-        output_path = videos_dir / f"{output_name}.mp4"
-        try:
-            mode = render_paired_media_video(pair["video_path"], pair["audio_path"], output_path, ffmpeg)
-            note = f"{pair.get('note', '')} | process_mode={mode}".strip(" |")
-            variant = VariantPlan(
-                variant_id=f"PAIR-{index:03d}",
-                source_video=pair["video_path"],
-                audio_source=pair["audio_path"],
-                output_name=output_name,
-                output_path=output_path,
-                combo_signature=pair["pair_id"],
-                note=note,
-            )
-        except Exception as exc:
-            failures.append({
-                "pair_id": pair["pair_id"],
-                "video_source": str(pair["video_path"]),
-                "audio_source": str(pair["audio_path"]),
-                "error": str(exc),
-            })
-            variant = VariantPlan(
-                variant_id=f"PAIR-{index:03d}",
-                source_video=pair["video_path"],
-                audio_source=pair["audio_path"],
-                output_name=output_name,
-                output_path=output_path,
-                combo_signature=pair["pair_id"],
-                quality_status="failed",
-                variation_status="pair_failed",
-                note=str(exc),
-            )
-        variants.append(variant)
-        print(f"[{index}/{len(scan['pairs'])}] {variant.quality_status} {output_path}")
+    scan: dict[str, Any] | None = None
+    try:
+        ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
+        ffprobe = resolve_binary("ffprobe", args.ffprobe)
+        input_folder = Path(args.input_folder).resolve()
+        if not input_folder.is_dir():
+            raise SystemExit(f"Input folder does not exist: {input_folder}")
 
-    payload = {
-        "task_id": task_id,
-        "mode": "paired_media_match",
-        "config": vars(args),
-        "scan_summary": scan["summary"],
-        "scan_items": normalize_scan_items(scan["items"]),
-        "unmatched": normalize_records(scan["unmatched"]),
-        "conflicts": normalize_records(scan["conflicts"]),
-        "failures": failures,
-        "variants": [item.to_dict() for item in variants],
-    }
-    write_outputs(task_root, payload, variants)
-    print(str(task_root))
-    return 0
+        scan = scan_pairable_media_folder(input_folder, ffprobe)
+        log_event(run_log, f"scan_summary={json.dumps(scan['summary'], ensure_ascii=False)}")
+        used_names: set[str] = set()
+        for index, pair in enumerate(scan["pairs"], start=1):
+            output_name = build_pair_output_name(pair["pair_id"], used_names)
+            output_path = videos_dir / f"{output_name}.mp4"
+            log_event(run_log, f"pair_start {index}/{len(scan['pairs'])} pair_id={pair['pair_id']} video={pair['video_path']} audio={pair['audio_path']}")
+            try:
+                mode = render_paired_media_video(pair["video_path"], pair["audio_path"], output_path, ffmpeg)
+                note = f"{pair.get('note', '')} | process_mode={mode}".strip(" |")
+                variant = VariantPlan(
+                    variant_id=f"PAIR-{index:03d}",
+                    source_video=pair["video_path"],
+                    audio_source=pair["audio_path"],
+                    output_name=output_name,
+                    output_path=output_path,
+                    combo_signature=pair["pair_id"],
+                    note=note,
+                )
+            except Exception as exc:
+                failures.append({
+                    "pair_id": pair["pair_id"],
+                    "video_source": str(pair["video_path"]),
+                    "audio_source": str(pair["audio_path"]),
+                    "error": str(exc),
+                })
+                variant = VariantPlan(
+                    variant_id=f"PAIR-{index:03d}",
+                    source_video=pair["video_path"],
+                    audio_source=pair["audio_path"],
+                    output_name=output_name,
+                    output_path=output_path,
+                    combo_signature=pair["pair_id"],
+                    quality_status="failed",
+                    variation_status="pair_failed",
+                    note=str(exc),
+                )
+                log_event(run_log, f"pair_failed {index}/{len(scan['pairs'])} pair_id={pair['pair_id']} error={exc}")
+            variants.append(variant)
+            log_event(run_log, f"pair_done {index}/{len(scan['pairs'])} status={variant.quality_status} output={output_path}")
+            print(f"[{index}/{len(scan['pairs'])}] {variant.quality_status} {output_path}")
+
+        payload = {
+            "task_id": task_id,
+            "mode": "paired_media_match",
+            "status": "failed" if failures else "success",
+            "config": vars(args),
+            "scan_summary": scan["summary"],
+            "scan_items": normalize_scan_items(scan["items"]),
+            "unmatched": normalize_records(scan["unmatched"]),
+            "conflicts": normalize_records(scan["conflicts"]),
+            "failures": failures,
+            "variants": [item.to_dict() for item in variants],
+        }
+        write_outputs(task_root, payload, variants)
+        log_event(run_log, f"{payload['status']} completed={len(variants)} failures={len(failures)} task_root={task_root}")
+        print(str(task_root))
+        return 1 if failures else 0
+    except BaseException as exc:
+        write_error(task_root, "paired_media_match", args, variants, exc, extra={"scan_summary": scan["summary"] if scan else None, "failures": failures})
+        raise
 
 
 def parse_args() -> argparse.Namespace:
@@ -416,6 +431,7 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
     lines = [
         f"task_id: {payload.get('task_id', '')}",
         "mode: paired_media_match",
+        f"status: {payload.get('status', '')}",
         f"created_at: {datetime.now().isoformat(timespec='seconds')}",
         f"scan_summary: {payload.get('scan_summary', {})}",
         "",
@@ -424,6 +440,41 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
     for item in payload.get("variants", []):
         lines.append(f"{item.get('variant_id')} | pair={item.get('combo_signature')} | status={item.get('quality_status')} | {item.get('output_path')}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def log_event(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {message}\n")
+
+
+def write_error(
+    task_root: Path,
+    stage: str,
+    args: argparse.Namespace,
+    variants: list[VariantPlan],
+    exc: BaseException,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "status": "failed",
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "interrupted": isinstance(exc, KeyboardInterrupt),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "config": vars(args),
+        "completed_count": len(variants),
+        "generated_outputs": [str(item.output_path) for item in variants],
+        "variants": [item.to_dict() for item in variants],
+        "traceback": traceback.format_exc(),
+    }
+    if extra:
+        payload.update(extra)
+    task_root.mkdir(parents=True, exist_ok=True)
+    (task_root / "error.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event(task_root / "run.log", f"failed stage={stage} type={type(exc).__name__} message={exc} completed={len(variants)}")
 
 
 if __name__ == "__main__":

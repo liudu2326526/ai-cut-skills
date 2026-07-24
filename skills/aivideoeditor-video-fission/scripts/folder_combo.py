@@ -8,6 +8,7 @@ import os
 import random
 import shutil
 import subprocess
+import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -74,57 +75,69 @@ class VariantPlan:
 
 def main() -> int:
     args = parse_args()
-    ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
-    ffprobe = resolve_binary("ffprobe", args.ffprobe)
-    folders = [Path(item).resolve() for item in args.folders]
-    if len(folders) < 2:
-        raise SystemExit("At least two folders are required.")
-    for folder in folders:
-        if not folder.is_dir():
-            raise SystemExit(f"Folder does not exist: {folder}")
-
-    usage_limits = parse_usage_limits(args.folder_usage_limits, len(folders))
-    rng = random.Random(args.seed or datetime.now().isoformat(timespec="microseconds"))
-    chains = collect_folder_permutation_chains(folders, usage_limits, rng)
-    if not chains:
-        raise SystemExit("No valid folder combinations could be generated.")
-
     task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     task_root = Path(args.output_root).resolve() / task_id
     videos_dir = task_root / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
+    run_log = task_root / "run.log"
+    log_event(run_log, f"start folder_permutation task_id={task_id}")
+    log_event(run_log, f"config={json.dumps(vars(args), ensure_ascii=False)}")
 
     variants: list[VariantPlan] = []
-    for index, chain in enumerate(chains, start=1):
-        output_name = sequence_output_name(args.task_name, index, len(chains), args.max_name_length)
-        output_path = videos_dir / f"{output_name}.mp4"
-        render_concat_video(list(chain), output_path, args.width, args.height, args.resize_mode, ffmpeg, ffprobe)
-        variant = VariantPlan(
-            variant_id=f"COMBO-{index:0{max(3, len(str(len(chains))))}d}",
-            source_video=chain[0],
-            output_name=output_name,
-            output_path=output_path,
-            source_chain=list(chain),
-            combo_signature=" + ".join(str(path) for path in chain),
-            business_tag=args.business_tag,
-            material_type=args.material_type,
-            authorization_note=args.authorization_note,
-            upload_note=args.upload_note,
-        )
-        variants.append(variant)
-        print(f"[{index}/{len(chains)}] {output_path}")
+    try:
+        ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
+        ffprobe = resolve_binary("ffprobe", args.ffprobe)
+        folders = [Path(item).resolve() for item in args.folders]
+        if len(folders) < 2:
+            raise SystemExit("At least two folders are required.")
+        for folder in folders:
+            if not folder.is_dir():
+                raise SystemExit(f"Folder does not exist: {folder}")
 
-    payload = {
-        "task_id": task_id,
-        "mode": "folder_permutation",
-        "config": vars(args),
-        "folders": [str(folder) for folder in folders],
-        "folder_usage_limits": usage_limits,
-        "variants": [item.to_dict() for item in variants],
-    }
-    write_outputs(task_root, payload, variants)
-    print(str(task_root))
-    return 0
+        usage_limits = parse_usage_limits(args.folder_usage_limits, len(folders))
+        rng = random.Random(args.seed or datetime.now().isoformat(timespec="microseconds"))
+        chains = collect_folder_permutation_chains(folders, usage_limits, rng)
+        if not chains:
+            raise SystemExit("No valid folder combinations could be generated.")
+        log_event(run_log, f"chains_planned count={len(chains)} folder_usage_limits={usage_limits}")
+
+        for index, chain in enumerate(chains, start=1):
+            output_name = sequence_output_name(args.task_name, index, len(chains), args.max_name_length)
+            output_path = videos_dir / f"{output_name}.mp4"
+            log_event(run_log, f"variant_start {index}/{len(chains)} chain={' + '.join(str(path) for path in chain)}")
+            render_concat_video(list(chain), output_path, args.width, args.height, args.resize_mode, ffmpeg, ffprobe)
+            variant = VariantPlan(
+                variant_id=f"COMBO-{index:0{max(3, len(str(len(chains))))}d}",
+                source_video=chain[0],
+                output_name=output_name,
+                output_path=output_path,
+                source_chain=list(chain),
+                combo_signature=" + ".join(str(path) for path in chain),
+                business_tag=args.business_tag,
+                material_type=args.material_type,
+                authorization_note=args.authorization_note,
+                upload_note=args.upload_note,
+            )
+            variants.append(variant)
+            log_event(run_log, f"variant_done {index}/{len(chains)} id={variant.variant_id} output={output_path}")
+            print(f"[{index}/{len(chains)}] {output_path}")
+
+        payload = {
+            "task_id": task_id,
+            "mode": "folder_permutation",
+            "status": "success",
+            "config": vars(args),
+            "folders": [str(folder) for folder in folders],
+            "folder_usage_limits": usage_limits,
+            "variants": [item.to_dict() for item in variants],
+        }
+        write_outputs(task_root, payload, variants)
+        log_event(run_log, f"success completed={len(variants)} task_root={task_root}")
+        print(str(task_root))
+        return 0
+    except BaseException as exc:
+        write_error(task_root, "folder_permutation", args, variants, exc)
+        raise
 
 
 def parse_args() -> argparse.Namespace:
@@ -445,6 +458,7 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
     lines = [
         f"task_id: {payload.get('task_id', '')}",
         "mode: folder_permutation",
+        f"status: {payload.get('status', '')}",
         f"created_at: {datetime.now().isoformat(timespec='seconds')}",
         f"folders: {payload.get('folders', [])}",
         f"folder_usage_limits: {payload.get('folder_usage_limits', [])}",
@@ -454,6 +468,32 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
     for item in payload.get("variants", []):
         lines.append(f"{item.get('variant_id')} | chain={item.get('combo_signature')} | {item.get('output_path')}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def log_event(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {message}\n")
+
+
+def write_error(task_root: Path, stage: str, args: argparse.Namespace, variants: list[VariantPlan], exc: BaseException) -> None:
+    payload = {
+        "status": "failed",
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "interrupted": isinstance(exc, KeyboardInterrupt),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "config": vars(args),
+        "completed_count": len(variants),
+        "generated_outputs": [str(item.output_path) for item in variants],
+        "variants": [item.to_dict() for item in variants],
+        "traceback": traceback.format_exc(),
+    }
+    task_root.mkdir(parents=True, exist_ok=True)
+    (task_root / "error.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event(task_root / "run.log", f"failed stage={stage} type={type(exc).__name__} message={exc} completed={len(variants)}")
 
 
 if __name__ == "__main__":

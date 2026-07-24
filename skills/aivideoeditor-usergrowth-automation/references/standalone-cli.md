@@ -34,6 +34,8 @@ $argList = @(
 
 Dry-run writes `<output-root>/<timestamp>_<task-name>/result.xlsx`, `task.json`, and `run.log`. It does not open the browser.
 
+On failure after a task folder is created, read `<output-root>/<timestamp>_<task-name>/error.json` and `error.log`. On early CLI failures such as unmatched video selectors, check stderr and `<output-root>/_cli_errors/` when `output_root` was available.
+
 ## Selectors
 
 Video selection supports:

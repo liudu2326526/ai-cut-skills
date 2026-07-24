@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +14,13 @@ import urllib.request
 DEFAULT_OUT_DIR = Path("downloads/douyin")
 DEFAULT_USER_DATA_DIR = Path.home() / ".codex" / "skill-data" / "douyin-video-downloader-edge-profile"
 DEFAULT_URLS: list[str] = []
+
+
+def append_log(log_path: Path, message: str) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with log_path.open("a", encoding="utf-8") as file:
+        file.write(f"[{timestamp}] {message}\n")
 
 
 def resolve_redirect_url(url: str) -> str:
@@ -212,6 +220,14 @@ async def capture_one(context, source_url: str, index: int, out_dir: Path, captu
 
     if is_chameleon_video_url(source_url):
         out_path = out_dir / f"{index:02d}_{video_id}.mp4"
+        result = {
+            "source_url": source_url,
+            "canonical_url": page_url,
+            "video_id": video_id,
+            "title": "",
+            "error": "capture interrupted before result was produced",
+            "ok": False,
+        }
         try:
             size = await asyncio.to_thread(download_http_file, source_url, source_url, out_path)
             result = {
@@ -252,6 +268,14 @@ async def capture_one(context, source_url: str, index: int, out_dir: Path, captu
     records: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     title = ""
+    result = {
+        "source_url": source_url,
+        "canonical_url": page_url,
+        "video_id": video_id,
+        "title": title,
+        "error": "capture interrupted before result was produced",
+        "ok": False,
+    }
 
     async def on_response(response):
         nonlocal title
@@ -425,11 +449,13 @@ async def main() -> None:
     out_dir = args.out_dir
     capture_dir = out_dir / "_captures"
     summary_path = out_dir / "summary.json"
+    log_path = out_dir / "run.log"
     user_data_dir = args.user_data_dir
 
     out_dir.mkdir(parents=True, exist_ok=True)
     capture_dir.mkdir(parents=True, exist_ok=True)
     user_data_dir.mkdir(parents=True, exist_ok=True)
+    append_log(log_path, f"run_start urls={len(urls)} out_dir={out_dir.resolve()} user_data_dir={user_data_dir.resolve()}")
 
     start_index = detect_start_index(out_dir, args.start_index)
     existing_results = load_existing_results(summary_path)
@@ -461,13 +487,29 @@ async def main() -> None:
         for offset, url in enumerate(urls, start=0):
             index = start_index + offset
             print(f"[{offset + 1}/{len(urls)}] #{index:02d} {url}")
-            result = await capture_one(context, url, index, out_dir, capture_dir)
+            append_log(log_path, f"item_start index={index:02d} url={url}")
+            try:
+                result = await capture_one(context, url, index, out_dir, capture_dir)
+            except BaseException as exc:
+                append_log(log_path, f"item_interrupted index={index:02d} url={url} error={exc}")
+                summary_path.write_text(
+                    json.dumps(existing_results + results, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                raise
             results.append(result)
+            merged_results = existing_results + results
+            summary_path.write_text(json.dumps(merged_results, ensure_ascii=False, indent=2), encoding="utf-8")
+            if result["ok"]:
+                append_log(log_path, f"item_ok index={index:02d} video_id={result.get('video_id')} file={result.get('file')} size={result.get('size')}")
+            else:
+                append_log(log_path, f"item_failed index={index:02d} video_id={result.get('video_id')} error={result.get('error')}")
             print("  ok" if result["ok"] else f"  failed: {result['error']}")
         await context.close()
 
     merged_results = existing_results + results
     summary_path.write_text(json.dumps(merged_results, ensure_ascii=False, indent=2), encoding="utf-8")
+    append_log(log_path, f"run_end summary={summary_path.resolve()} ok={sum(1 for item in results if item.get('ok'))} failed={sum(1 for item in results if not item.get('ok'))}")
     print(f"wrote {summary_path}")
 
 

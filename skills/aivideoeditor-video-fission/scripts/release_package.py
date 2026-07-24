@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import traceback
 import zipfile
 from pathlib import Path
 
@@ -11,19 +12,32 @@ from pathlib import Path
 def main() -> int:
     args = parse_args()
     zip_path = Path(args.zip_path).resolve()
-    if args.source_dir:
-        source_dir = Path(args.source_dir).resolve()
-        if not source_dir.is_dir():
-            raise SystemExit(f"Source directory does not exist: {source_dir}")
-        create_zip(source_dir, zip_path)
-    if not zip_path.is_file():
-        raise SystemExit(f"Zip file does not exist: {zip_path}")
+    run_log = zip_path.with_name(f"{zip_path.name}.run.log")
+    log_event(run_log, f"start release_package zip_path={zip_path}")
+    log_event(run_log, f"config={json.dumps(vars(args), ensure_ascii=False)}")
+    try:
+        if args.source_dir:
+            source_dir = Path(args.source_dir).resolve()
+            if not source_dir.is_dir():
+                raise SystemExit(f"Source directory does not exist: {source_dir}")
+            log_event(run_log, f"create_zip source_dir={source_dir}")
+            create_zip(source_dir, zip_path)
+        if not zip_path.is_file():
+            raise SystemExit(f"Zip file does not exist: {zip_path}")
 
-    metadata = build_metadata(zip_path, args.version, args.download_url, args.release_note)
-    print(json.dumps(metadata, ensure_ascii=False, indent=2))
-    print()
-    print(to_env_lines(metadata))
-    return 0
+        metadata = build_metadata(zip_path, args.version, args.download_url, args.release_note)
+        zip_path.with_name(f"{zip_path.name}.metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log_event(run_log, f"success file_size={metadata['file_size']} sha256={metadata['sha256']}")
+        print(json.dumps(metadata, ensure_ascii=False, indent=2))
+        print()
+        print(to_env_lines(metadata))
+        return 0
+    except BaseException as exc:
+        write_error(zip_path, args, exc)
+        raise
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,6 +114,35 @@ def escape_env_value(value: object) -> str:
     if any(ch.isspace() for ch in text) or any(ch in text for ch in "#'\""):
         return json.dumps(text, ensure_ascii=False)
     return text
+
+
+def log_event(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {message}\n")
+
+
+def write_error(zip_path: Path, args: argparse.Namespace, exc: BaseException) -> None:
+    from datetime import datetime
+
+    payload = {
+        "status": "failed",
+        "stage": "release_package",
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "interrupted": isinstance(exc, KeyboardInterrupt),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "config": vars(args),
+        "zip_path": str(zip_path),
+        "traceback": traceback.format_exc(),
+    }
+    error_path = zip_path.with_name(f"{zip_path.name}.error.json")
+    error_path.parent.mkdir(parents=True, exist_ok=True)
+    error_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event(zip_path.with_name(f"{zip_path.name}.run.log"), f"failed type={type(exc).__name__} message={exc}")
 
 
 if __name__ == "__main__":

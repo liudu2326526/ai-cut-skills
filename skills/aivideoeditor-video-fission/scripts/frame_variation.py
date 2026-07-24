@@ -9,6 +9,7 @@ import os
 import random
 import shutil
 import subprocess
+import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -96,15 +97,6 @@ class VariantPlan:
 
 def main() -> int:
     args = parse_args()
-    ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
-    ffprobe = resolve_binary("ffprobe", args.ffprobe)
-    source_paths = [Path(item).resolve() for item in args.source]
-    for path in source_paths:
-        if not path.is_file():
-            raise SystemExit(f"Source video does not exist: {path}")
-        if path.suffix.lower() not in VIDEO_SUFFIXES:
-            raise SystemExit(f"Unsupported video suffix: {path}")
-
     task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_root = Path(args.output_root).resolve()
     task_root = output_root / task_id
@@ -112,15 +104,28 @@ def main() -> int:
     temp_cover_dir = task_root / "_cover_candidates"
     videos_dir.mkdir(parents=True, exist_ok=True)
     temp_cover_dir.mkdir(parents=True, exist_ok=True)
+    run_log = task_root / "run.log"
+    log_event(run_log, f"start frame_variation task_id={task_id}")
+    log_event(run_log, f"config={json.dumps(vars(args), ensure_ascii=False)}")
 
-    rng = random.Random(args.seed or task_id)
-    selected_covers: list[CoverCandidate] = []
     variants: list[VariantPlan] = []
-    used_names: set[str] = set()
-    total = len(source_paths) * args.target_count
 
     try:
+        ffmpeg = resolve_binary("ffmpeg", args.ffmpeg)
+        ffprobe = resolve_binary("ffprobe", args.ffprobe)
+        source_paths = [Path(item).resolve() for item in args.source]
+        for path in source_paths:
+            if not path.is_file():
+                raise SystemExit(f"Source video does not exist: {path}")
+            if path.suffix.lower() not in VIDEO_SUFFIXES:
+                raise SystemExit(f"Unsupported video suffix: {path}")
+
+        rng = random.Random(args.seed or task_id)
+        selected_covers: list[CoverCandidate] = []
+        used_names: set[str] = set()
+        total = len(source_paths) * args.target_count
         for source_index, source_path in enumerate(source_paths, start=1):
+            log_event(run_log, f"source_start index={source_index} path={source_path}")
             source = load_source_video(source_path, ffprobe)
             used_signatures: set[str] = set()
             max_retries = max(args.max_retries, args.target_count * 4)
@@ -141,20 +146,25 @@ def main() -> int:
                     ffmpeg=ffmpeg,
                 )
                 variants.append(variant)
+                log_event(run_log, f"variant_done {len(variants)}/{total} id={variant.variant_id} output={variant.output_path}")
                 print(f"[{len(variants)}/{total}] {variant.output_path}")
+        payload = {
+            "task_id": task_id,
+            "mode": "frame_variation",
+            "status": "success",
+            "config": vars(args),
+            "source_videos": [str(path) for path in source_paths],
+            "variants": [item.to_dict() for item in variants],
+        }
+        write_outputs(task_root, payload, variants)
+        log_event(run_log, f"success completed={len(variants)} task_root={task_root}")
+        print(str(task_root))
+        return 0
+    except BaseException as exc:
+        write_error(task_root, "frame_variation", args, variants, exc)
+        raise
     finally:
         shutil.rmtree(temp_cover_dir, ignore_errors=True)
-
-    payload = {
-        "task_id": task_id,
-        "mode": "frame_variation",
-        "config": vars(args),
-        "source_videos": [str(path) for path in source_paths],
-        "variants": [item.to_dict() for item in variants],
-    }
-    write_outputs(task_root, payload, variants)
-    print(str(task_root))
-    return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -594,6 +604,7 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
     lines = [
         f"task_id: {payload.get('task_id', '')}",
         "mode: frame_variation",
+        f"status: {payload.get('status', '')}",
         f"created_at: {datetime.now().isoformat(timespec='seconds')}",
         f"source_videos: {payload.get('source_videos', [])}",
         "",
@@ -606,6 +617,32 @@ def write_task_log(path: Path, payload: dict[str, Any]) -> None:
             f"{item.get('output_path')}"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def log_event(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {message}\n")
+
+
+def write_error(task_root: Path, stage: str, args: argparse.Namespace, variants: list[VariantPlan], exc: BaseException) -> None:
+    payload = {
+        "status": "failed",
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "interrupted": isinstance(exc, KeyboardInterrupt),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "config": vars(args),
+        "completed_count": len(variants),
+        "generated_outputs": [str(item.output_path) for item in variants],
+        "variants": [item.to_dict() for item in variants],
+        "traceback": traceback.format_exc(),
+    }
+    task_root.mkdir(parents=True, exist_ok=True)
+    (task_root / "error.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event(task_root / "run.log", f"failed stage={stage} type={type(exc).__name__} message={exc} completed={len(variants)}")
 
 
 if __name__ == "__main__":

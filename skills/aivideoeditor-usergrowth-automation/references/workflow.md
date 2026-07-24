@@ -59,6 +59,8 @@ The runner serializes writes per resolved Excel path, which protects same-proces
 
 - `task.json`: machine-readable config, summary, result path, duplicate song workbook path, and plans/items.
 - `run.log`: summary and per-item status/type/song/CID/tags.
+- `error.json` and `error.log`: task-level failure records when execution fails after the task folder is created.
+- `<output_root>/_cli_errors/*.json` and `*.log`: early CLI failures before a task folder exists, when `output_root` was already parsed.
 - `debug/run.log`: browser-level timing and error-snapshot metadata.
 - `debug/*.txt` and `debug/*.png`: only written by error snapshots in current code because normal `_snapshot(..., screenshot=False)` returns early.
 

@@ -25,7 +25,7 @@ For UserGrowth browser upload, use `$aivideoeditor-usergrowth-automation` after 
 - Optional: `Pillow` for better cover sharpness/brightness/hash evaluation in frame variation
 - Optional: `openpyxl` for `.xlsx` manifest exports
 
-Every production script writes a timestamped task folder containing `videos/`, `manifest.csv`, optional `manifest.xlsx`, `task.json`, and `task.log`.
+Every production script writes a timestamped task folder containing `videos/`, `manifest.csv`, optional `manifest.xlsx`, `task.json`, `task.log`, and incremental `run.log`. If a task fails or is interrupted after the task folder is created, it also writes `error.json`.
 
 ## Workflow Selection
 
@@ -108,6 +108,28 @@ python C:\Users\Donson\.codex\skills\aivideoeditor-video-fission\scripts\release
 - Compute SHA256 in uppercase.
 - Emit both JSON metadata and `MATERIAL_REMIX_TOOL_*` `.env` lines.
 - Do not upload packages or change production release URLs unless explicitly asked.
+
+## Failure And Log Reading
+
+For `frame_variation.py`, `folder_combo.py`, and `paired_media.py`, locate the latest timestamped folder under the `--output-root` used by the command.
+
+Read files in this order:
+
+1. `run.log`: incremental timeline. It records task start, config, planned counts, per-item start/done events, and the final failure/success line.
+2. `error.json`: exists only after an overall failure or interruption. Read `error_type`, `error_message`, `interrupted`, `completed_count`, `generated_outputs`, and `traceback`.
+3. `task.json`: exists after normal completion, or paired-media completion with per-pair failures. Read `status`, `variants`, and mode-specific sections.
+4. `task.log`: human-readable summary of completed variants.
+5. `manifest.csv` / `manifest.xlsx`: generated output ledger for completed variants.
+6. `videos/`: partial outputs may remain here if a later item failed or the process was interrupted.
+
+Mode-specific notes:
+
+- 抽帧裂变: if failure happens while rendering a variant, previously completed variants are listed in `error.json.generated_outputs`; the currently rendering output may be incomplete.
+- 前贴排列组合: `run.log` records each combination chain before rendering, so the last `variant_start` line identifies the failing chain.
+- 音视频配对: individual pair failures do not abort the whole task. They are recorded in `task.json.failures`, with failed rows also appearing in `manifest.csv`. Overall scan/render setup failures create `error.json`.
+- 发布包辅助: there is no task folder. Logs are written next to the zip path as `<zip-name>.run.log`, `<zip-name>.error.json`, and `<zip-name>.metadata.json`.
+
+If no task folder or zip-side log exists, the failure happened before argument parsing or before the script could create its output path. In that case, inspect the command-line stderr/stdout, verify paths, and rerun with an existing writable output directory and explicit `--ffmpeg` / `--ffprobe` if needed.
 
 ## Validation
 

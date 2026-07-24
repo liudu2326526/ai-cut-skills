@@ -9,6 +9,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,13 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
+
+
+def append_log(log_path: Path, message: str) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with log_path.open("a", encoding="utf-8") as file:
+        file.write(f"[{timestamp}] {message}\n")
 
 
 @dataclass
@@ -307,17 +315,26 @@ def main() -> None:
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = args.out_dir / "run.log"
+    append_log(log_path, f"run_start out_dir={args.out_dir.resolve()} no_download={args.no_download} skip_existing={args.skip_existing}")
     has_keyword_inputs = bool(args.keyword or args.keywords_file)
     needs_client = has_keyword_inputs or not args.no_download
-    client = WanbangClient(args.api_key, args.api_secret, args.base_url) if needs_client else None
-    refs = build_references(args, client)
+    try:
+        client = WanbangClient(args.api_key, args.api_secret, args.base_url) if needs_client else None
+        refs = build_references(args, client)
+    except Exception as exc:
+        append_log(log_path, f"prepare_failed error={exc}")
+        raise
     if not refs:
+        append_log(log_path, "prepare_failed error=No valid Douyin GID references found.")
         raise RuntimeError("No valid Douyin GID references found.")
+    append_log(log_path, f"references_ready count={len(refs)}")
 
     results: list[DownloadResult] = []
     for index, ref in enumerate(refs, start=1):
         target = args.out_dir / f"{ref.gid}.mp4"
         print(f"[{index}/{len(refs)}] {ref.gid}")
+        append_log(log_path, f"item_start index={index} gid={ref.gid} source={ref.source}")
         try:
             if args.no_download:
                 results.append(DownloadResult(ref.source, ref.gid, ref.video_url, "resolved", keyword=ref.keyword))
@@ -350,14 +367,18 @@ def main() -> None:
                     )
                 )
             print(f"  {results[-1].status}")
+            append_log(log_path, f"item_{results[-1].status} index={index} gid={ref.gid} path={results[-1].path} size={results[-1].file_size}")
         except Exception as exc:
             results.append(DownloadResult(ref.source, ref.gid, ref.video_url, "failed", keyword=ref.keyword, error=str(exc)))
             print(f"  failed: {exc}")
+            append_log(log_path, f"item_failed index={index} gid={ref.gid} error={exc}")
         finally:
             write_outputs(results, args.out_dir)
+            append_log(log_path, f"summary_written count={len(results)} summary={(args.out_dir / 'summary.json').resolve()}")
             if args.sleep > 0 and index < len(refs):
                 time.sleep(args.sleep)
 
+    append_log(log_path, f"run_end downloaded={sum(1 for item in results if item.status == 'downloaded')} reused={sum(1 for item in results if item.status == 'reused')} failed={sum(1 for item in results if item.status == 'failed')}")
     print((args.out_dir / "summary.json").resolve())
 
 

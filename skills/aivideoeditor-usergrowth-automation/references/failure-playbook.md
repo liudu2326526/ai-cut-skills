@@ -1,6 +1,34 @@
 # Failure Playbook
 
-Use the task folder and `debug/` artifacts first. Ask for or inspect `task.json`, `run.log`, `debug/run.log`, and the newest `debug/*.png`/`*.txt` when live automation fails.
+Use the task folder and `debug/` artifacts first. Ask for or inspect `task.json`, `run.log`, `error.json`, `error.log`, `debug/run.log`, and the newest `debug/*.png`/`*.txt` when live automation fails.
+
+## Where To Read Logs
+
+- Normal dry-run success
+  Read `<output-root>/<timestamp>_<task-name>/task.json`, `run.log`, and `result.xlsx`.
+
+- Normal live success or per-order platform failure
+  Read `<output-root>/<timestamp>_<task-name>/task.json` and `run.log`. For browser/platform failures, also read `debug/run.log` and the newest `debug/*.png`/`debug/*.txt`.
+
+- Failure after a task folder has been created
+  Read `<output-root>/<timestamp>_<task-name>/error.json` and `error.log`. These include error type, message, selected videos, sanitized config, and Python traceback. If the browser had already started, also read `debug/run.log` and error snapshots.
+
+- Failure before task execution, such as unmatched video selectors
+  Read the CLI stderr. If `output_root` was already parsed, also check `<output-root>/_cli_errors/*.json` and `*.log`.
+
+- Hard kill, power loss, or process termination
+  Only logs flushed before termination will exist. Check the latest task folder under `output_root`, then `error.*`, `task.json`, `run.log`, and `debug/` in that order.
+
+## File Meanings
+
+- `task.json`: final structured result when the task reaches normal completion; contains config, summary, selected videos, plans and item statuses.
+- `run.log`: final human-readable summary when the task reaches normal completion.
+- `error.json`: structured failure record for task-level exceptions.
+- `error.log`: human-readable failure record and traceback.
+- `debug/run.log`: browser timing, browser error snapshot metadata, exception type/message/traceback for `_snapshot_error`.
+- `debug/<name>.txt`: page URL and body text at the failing browser step.
+- `debug/<name>.png`: full-page screenshot at the failing browser step.
+- `duplicate_songs.xlsx`: duplicate song-name records relevant to the selected batch, when duplicates are found.
 
 ## Common Failures
 

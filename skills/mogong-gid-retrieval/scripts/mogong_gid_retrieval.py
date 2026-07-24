@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import time
+import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -985,6 +986,45 @@ def write_summary_json(summary: dict, output_path: Path) -> Path:
     return output_path
 
 
+def event_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def append_run_event(output_dir: Path, event: str, **fields: object) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    record = {"ts": event_timestamp(), "event": event}
+    record.update(fields)
+    with (output_dir / "run_events.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def write_failure_artifacts(output_dir: Path, exc: BaseException, *, interrupted: bool = False) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": event_timestamp(),
+        "status": "interrupted" if interrupted else "failed",
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "traceback": "" if interrupted else traceback.format_exc(),
+    }
+    write_summary_json(payload, output_dir / "failure.json")
+    append_run_event(
+        output_dir,
+        "interrupted" if interrupted else "failed",
+        error_type=payload["error_type"],
+        error=payload["error"],
+    )
+
+
+def write_json_dataclasses(items: Iterable[object], output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output_path
+
+
 async def build_references(args) -> tuple[list[VideoReference], int]:
     input_path = Path(args.input)
     if args.mode == "keyword":
@@ -1060,6 +1100,7 @@ async def maybe_query_mogong(args, references: list[VideoReference]) -> list[Res
 async def maybe_download(args, items: list[ResultItem]) -> None:
     if not args.download:
         return
+    output_dir = Path(args.output_dir)
     client = WanbangDouyinClient(
         api_key=args.wanbang_key,
         api_secret=args.wanbang_secret,
@@ -1081,6 +1122,16 @@ async def maybe_download(args, items: list[ResultItem]) -> None:
             item.download_path = None
             item.download_error = str(exc)
         print(f"download {index}/{len(targets)} {item.gid}: {item.download_status}", flush=True)
+        append_run_event(
+            output_dir,
+            "download_item_finished",
+            index=index,
+            total=len(targets),
+            gid=item.gid,
+            status=item.download_status,
+            error=item.download_error,
+        )
+        write_json_dataclasses(items, output_dir / "partial_results.json")
 
 
 def summarize(
@@ -1112,20 +1163,55 @@ def summarize(
 async def run_command(args) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    append_run_event(
+        output_dir,
+        "started",
+        mode=args.mode,
+        input=args.input,
+        skip_mogong=args.skip_mogong,
+        download=args.download,
+    )
+    append_run_event(output_dir, "build_references_started")
     references, input_count = await build_references(args)
+    write_json_dataclasses(references, output_dir / "parsed_references.json")
+    append_run_event(
+        output_dir,
+        "build_references_finished",
+        input_count=input_count,
+        reference_count=len(references),
+        parsed_count=sum(1 for item in references if item.gid and item.video_url),
+    )
     print(f"parsed references: {sum(1 for item in references if item.gid)}/{input_count}", flush=True)
 
     parse_errors = [asdict(item) for item in references if item.error_message]
     if parse_errors:
         write_summary_json({"parse_errors": parse_errors}, output_dir / "parse_errors.json")
+        append_run_event(output_dir, "parse_errors_written", count=len(parse_errors))
 
+    append_run_event(output_dir, "mogong_query_started", skipped=args.skip_mogong)
     items = await maybe_query_mogong(args, references)
+    write_json_dataclasses(items, output_dir / "partial_results.json")
+    append_run_event(
+        output_dir,
+        "mogong_query_finished",
+        result_count=len(items),
+        matched_count=sum(1 for item in items if item.query_status == "matched"),
+        query_failed_count=sum(1 for item in items if item.query_status in QUERY_FAILED_STATUSES),
+    )
+    append_run_event(output_dir, "download_started", enabled=args.download)
     await maybe_download(args, items)
+    append_run_event(
+        output_dir,
+        "download_finished",
+        downloaded_count=sum(1 for item in items if item.download_status in VIDEO_AVAILABLE_STATUSES),
+        failed_download_count=sum(1 for item in items if item.download_status == "failed"),
+    )
 
     write_results_xlsx(items, output_dir / "all_results.xlsx", matched_only=False)
     write_results_xlsx(items, output_dir / "matched_urls.xlsx", matched_only=True)
     summary = summarize(mode=args.mode, input_count=input_count, references=references, items=items, output_dir=output_dir)
     write_summary_json(summary, output_dir / "summary.json")
+    append_run_event(output_dir, "completed", summary_json=str(output_dir / "summary.json"))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
@@ -1178,10 +1264,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args) or 0)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
+        if hasattr(args, "output_dir"):
+            write_failure_artifacts(Path(args.output_dir), exc, interrupted=True)
         print("Interrupted", file=sys.stderr)
         return 130
     except Exception as exc:
+        if hasattr(args, "output_dir"):
+            write_failure_artifacts(Path(args.output_dir), exc, interrupted=False)
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

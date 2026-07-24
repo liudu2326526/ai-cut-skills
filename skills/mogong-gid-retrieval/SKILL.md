@@ -94,9 +94,25 @@ Add `--download` to download matched videos through Wanbang `item_get_video`. Us
    - `all_results.xlsx`: every parsed GID with query status, Mogong reply, and download status.
    - `matched_urls.xlsx`: only rows whose Mogong query status is `matched`.
    - `summary.json`: counts and output paths.
+   - `run_events.jsonl`: JSON-lines stage log for every `run` execution.
+   - `failure.json`: only present after an uncaught failure or keyboard interruption.
+   - `parsed_references.json`: parsed URL/GID/search references, written before Mogong querying.
+   - `partial_results.json`: latest query/download results, useful when the final Excel files were not written.
    - `parse_errors.json`: only present when some inputs cannot be parsed.
    - `debug/`: Mogong browser snapshots and text dumps when querying Mogong.
 4. If a Mogong run fails, check `debug/*.txt` first. Failures usually come from login captcha, customer ID mismatch, page structure changes, or the GID ability not being selected.
+
+## Failure Logs
+
+When a task fails or is interrupted, read logs in this order:
+
+1. `run_events.jsonl`: inspect the last JSON line to see the last completed or failed stage. Key events include `build_references_started`, `build_references_finished`, `mogong_query_started`, `mogong_query_finished`, `download_item_finished`, `download_finished`, `completed`, `failed`, and `interrupted`.
+2. `failure.json`: read `status`, `error_type`, `error`, and `traceback`. This file is written for uncaught exceptions and Ctrl-C interruptions after the `run` command has parsed `--output-dir`.
+3. `debug/*.txt` and `debug/*.png`: use these for Mogong page-level failures. Filenames identify the stage, such as `customer_not_found`, `assistant_icon_not_found`, `gid_ability_not_selected`, `query_<gid>_no_reply`, or `query_<gid>_reply_timeout`.
+4. `parsed_references.json` and `parse_errors.json`: use these when input rows, short links, or keyword search results did not become valid GIDs.
+5. `partial_results.json`: use this if failure happens after Mogong starts or during video download; it preserves the latest per-GID query/download state.
+
+If no output directory exists, the failure happened before the `run` command created `--output-dir`, usually argument parsing, an invalid command, or inability to start Python. In that case, use the terminal stderr output.
 
 ## Behavior
 

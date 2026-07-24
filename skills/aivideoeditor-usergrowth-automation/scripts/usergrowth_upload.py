@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import traceback
 from typing import Any, Iterable
 
 from usergrowth_automation.usergrowth_browser import UserGrowthBrowserClient
@@ -35,11 +36,13 @@ ProgressCallback = Any
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
     args = parse_args(argv)
+    cli_error_output_root: Path | None = None
     try:
         manifest_path = Path(args.manifest).resolve() if args.manifest else None
         manifest = _read_manifest(manifest_path)
         base_dir = manifest_path.parent if manifest_path else Path.cwd()
         config = _config_from_args(args, manifest, base_dir)
+        cli_error_output_root = config.output_root
         selectors = _video_selectors_from_args(args, manifest)
         video_paths = resolve_video_selection(
             config.video_folder,
@@ -62,7 +65,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(_public_payload(payload), ensure_ascii=False, indent=2), flush=True)
         return 0
+    except KeyboardInterrupt as exc:
+        _write_cli_error(cli_error_output_root, exc)
+        print("ERROR: interrupted", file=sys.stderr, flush=True)
+        return 130
     except Exception as exc:  # noqa: BLE001
+        _write_cli_error(cli_error_output_root, exc)
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return 1
 
@@ -289,54 +297,62 @@ def run_selected_usergrowth_task(
     duplicate_song_excel = task_root / "duplicate_songs.xlsx"
     task_root.mkdir(parents=True, exist_ok=True)
 
-    _emit(progress, f"已选中 {len(video_paths)} 个视频，开始读取歌曲库和回填模板")
-    plans, items = build_selected_usergrowth_plan(
-        config,
-        video_paths,
-        duplicate_song_output_path=duplicate_song_excel,
-    )
-    if not items:
-        raise RuntimeError("没有可处理的视频")
-
-    ready_count = sum(1 for item in items if item.status != "skipped")
-    skipped_count = sum(1 for item in items if item.status == "skipped")
-    _emit(progress, f"预检完成：待上传 {ready_count} 个，跳过 {skipped_count} 个")
-
-    if config.dry_run:
-        for item in items:
-            if item.status == "pending":
-                item.status = "ready"
-                item.message = "预检通过，未执行上传"
-        result_excel = task_root / "result.xlsx"
-        write_back_results(config.order_excel, result_excel, items, include_ready=True)
-        _emit(progress, f"预检结果已写入：{result_excel}")
-    else:
-        active_plans = [plan for plan in plans if plan.status != "skipped"]
-
-        def write_order_backfill(plan: UserGrowthOrderPlan) -> None:
-            with _backfill_lock(config.order_excel):
-                write_back_results(config.order_excel, config.order_excel, plan.items, include_ready=False)
-            _emit(progress, f"订单 {plan.order_id} 已写回回填 Excel")
-
-        browser = UserGrowthBrowserClient(
-            config.account,
-            config.password,
-            headless=config.headless,
-            debug_dir=debug_dir,
-            refresh_interval_seconds=config.refresh_interval_seconds,
-            max_status_retries=config.max_status_retries,
-            browser_slow_mo_ms=config.browser_slow_mo_ms,
-            order_complete=write_order_backfill,
+    try:
+        _emit(progress, f"已选中 {len(video_paths)} 个视频，开始读取歌曲库和回填模板")
+        plans, items = build_selected_usergrowth_plan(
+            config,
+            video_paths,
+            duplicate_song_output_path=duplicate_song_excel,
         )
-        asyncio.run(browser.run(active_plans, progress))
-        result_excel = config.order_excel
-        _emit(progress, f"正式上传完成，CID 已写回：{result_excel}")
+        if not items:
+            raise RuntimeError("没有可处理的视频")
 
-    payload = _build_payload(config, task_id, task_root, plans, items, result_excel, duplicate_song_excel)
-    payload["selected_videos"] = [str(path) for path in video_paths]
-    (task_root / "task.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    _write_log(task_root, payload)
-    return payload
+        ready_count = sum(1 for item in items if item.status != "skipped")
+        skipped_count = sum(1 for item in items if item.status == "skipped")
+        _emit(progress, f"预检完成：待上传 {ready_count} 个，跳过 {skipped_count} 个")
+
+        if config.dry_run:
+            for item in items:
+                if item.status == "pending":
+                    item.status = "ready"
+                    item.message = "预检通过，未执行上传"
+            result_excel = task_root / "result.xlsx"
+            write_back_results(config.order_excel, result_excel, items, include_ready=True)
+            _emit(progress, f"预检结果已写入：{result_excel}")
+        else:
+            active_plans = [plan for plan in plans if plan.status != "skipped"]
+
+            def write_order_backfill(plan: UserGrowthOrderPlan) -> None:
+                with _backfill_lock(config.order_excel):
+                    write_back_results(config.order_excel, config.order_excel, plan.items, include_ready=False)
+                _emit(progress, f"订单 {plan.order_id} 已写回回填 Excel")
+
+            browser = UserGrowthBrowserClient(
+                config.account,
+                config.password,
+                headless=config.headless,
+                debug_dir=debug_dir,
+                refresh_interval_seconds=config.refresh_interval_seconds,
+                max_status_retries=config.max_status_retries,
+                browser_slow_mo_ms=config.browser_slow_mo_ms,
+                order_complete=write_order_backfill,
+            )
+            asyncio.run(browser.run(active_plans, progress))
+            result_excel = config.order_excel
+            _emit(progress, f"正式上传完成，CID 已写回：{result_excel}")
+
+        payload = _build_payload(config, task_id, task_root, plans, items, result_excel, duplicate_song_excel)
+        payload["selected_videos"] = [str(path) for path in video_paths]
+        (task_root / "task.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_log(task_root, payload)
+        return payload
+    except BaseException as exc:
+        _write_task_error(task_root, config, video_paths, exc)
+        try:
+            setattr(exc, "_usergrowth_task_root", str(task_root))
+        except Exception:
+            pass
+        raise
 
 
 def build_selected_usergrowth_plan(
@@ -406,6 +422,84 @@ def _public_payload(payload: dict) -> dict:
     config.pop("password", None)
     public["config"] = config
     return public
+
+
+def _write_task_error(
+    task_root: Path,
+    config: UserGrowthRunConfig,
+    video_paths: list[Path],
+    exc: BaseException,
+) -> None:
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    payload = {
+        "status": "failed",
+        "timestamp": timestamp,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "task_root": str(task_root),
+        "mode": "dry_run" if config.dry_run else "browser_upload",
+        "selected_videos": [str(path) for path in video_paths],
+        "config": _safe_config_dict(config),
+        "traceback": trace,
+    }
+    try:
+        task_root.mkdir(parents=True, exist_ok=True)
+        (task_root / "error.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        lines = [
+            f"timestamp: {timestamp}",
+            f"status: failed",
+            f"mode: {payload['mode']}",
+            f"error_type: {type(exc).__name__}",
+            f"error_message: {exc}",
+            "",
+            "[selected_videos]",
+            *[str(path) for path in video_paths],
+            "",
+            "[traceback]",
+            trace.rstrip(),
+        ]
+        (task_root / "error.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _write_cli_error(output_root: Path | None, exc: BaseException) -> None:
+    if not output_root or getattr(exc, "_usergrowth_task_root", None):
+        return
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    error_dir = output_root / "_cli_errors"
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    payload = {
+        "status": "failed",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "traceback": trace,
+    }
+    try:
+        error_dir.mkdir(parents=True, exist_ok=True)
+        (error_dir / f"{timestamp}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        (error_dir / f"{timestamp}.log").write_text(trace, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _safe_config_dict(config: UserGrowthRunConfig) -> dict[str, Any]:
+    return {
+        "video_folder": str(config.video_folder),
+        "backfill_excel": str(config.order_excel),
+        "song_excel": str(config.song_excel),
+        "output_root": str(config.output_root),
+        "order_id": config.order_id,
+        "task_name": config.task_name,
+        "month_tag": config.month_tag,
+        "recursive": config.recursive,
+        "dry_run": config.dry_run,
+        "headless": config.headless,
+        "refresh_interval_seconds": config.refresh_interval_seconds,
+        "browser_slow_mo_ms": config.browser_slow_mo_ms,
+    }
 
 
 def _configure_stdio() -> None:
