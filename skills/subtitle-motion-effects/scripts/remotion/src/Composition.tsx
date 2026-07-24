@@ -217,6 +217,9 @@ const tokenTransform = (
     ? index * staggerFrames
     : Math.round(token.start * fps);
   const tokenFrame = localFrame - tokenStartFrame;
+  if (cue.effect.type === 'bounce_badge' && (cue.effect.badgeShape ?? cue.effect.preset) === 'heart') {
+    return {opacity: 1, transform: 'translateY(0) scale(1)'};
+  }
   if (cue.effect.type === 'drop_word') {
     const durationFrames = Math.max(1, Math.round(cue.effect.duration * fps));
     const springValue = spring({
@@ -300,6 +303,57 @@ const activeIndex = (cue: SubtitleCue, tokens: Token[], localFrame: number, fps:
   return Math.min(count - 1, Math.max(0, Math.floor((localFrame / total) * count)));
 };
 
+const estimateTokenWidth = (cue: SubtitleCue, token: Token) => {
+  const fontSize = Number(token.style.fontSize ?? cue.style.fontSize ?? 64);
+  const text = token.text || '';
+  if (!text.trim()) return Math.max(4, fontSize * 0.32);
+  const hasAscii = /[A-Za-z0-9￥¥.,!?]/.test(text);
+  const charCount = Math.max(1, Array.from(text).length);
+  const glyphWidth = hasAscii ? fontSize * 0.58 : fontSize * 0.9;
+  return Math.max(fontSize * 0.42, charCount * glyphWidth + fontSize * 0.08);
+};
+
+const travellingBadgeState = (
+  cue: SubtitleCue,
+  tokens: Token[],
+  localFrame: number,
+  fps: number,
+) => {
+  const visibleTokens = tokens.length ? tokens : [{text: cue.text, style: cue.style}];
+  const count = visibleTokens.length;
+  const active = activeIndex(cue, visibleTokens, localFrame, fps);
+  const widths = visibleTokens.map((token) => estimateTokenWidth(cue, token));
+  const rawLineWidth = widths.reduce((sum, width) => sum + width, 0);
+  const lineWidth = Math.max(1, Number(cue.maxWidth ?? rawLineWidth));
+  const scale = rawLineWidth > lineWidth * 0.94 ? (lineWidth * 0.94) / rawLineWidth : 1;
+  const scaledWidths = widths.map((width) => width * scale);
+  let cursor = lineWidth / 2 - scaledWidths.reduce((sum, width) => sum + width, 0) / 2;
+  const centers = scaledWidths.map((width) => {
+    const center = cursor + width / 2;
+    cursor += width;
+    return center;
+  });
+
+  const currentToken = visibleTokens[active];
+  const nextIndex = Math.min(count - 1, active + 1);
+  const localSeconds = localFrame / fps;
+  const fallbackStart = (cue.end - cue.start) * active / Math.max(1, count);
+  const fallbackEnd = (cue.end - cue.start) * (active + 1) / Math.max(1, count);
+  const tokenStart = currentToken.start ?? fallbackStart;
+  const tokenEnd = currentToken.end ?? fallbackEnd;
+  const tokenDuration = Math.max(0.001, tokenEnd - tokenStart);
+  const progress = clamp01((localSeconds - tokenStart) / tokenDuration);
+  const smoothProgress = 0.5 - Math.cos(progress * Math.PI) * 0.5;
+  const currentX = centers[active] ?? lineWidth / 2;
+  const nextX = centers[nextIndex] ?? currentX;
+  const x = currentX + (nextX - currentX) * smoothProgress;
+  const fontSize = Number(currentToken.style.fontSize ?? cue.style.fontSize ?? 64);
+  const travelHeight = cue.effect.badgeTravelHeight ?? Math.max(12, fontSize * 0.28);
+  const y = -Math.sin(progress * Math.PI) * travelHeight;
+  const tokenFrame = localFrame - Math.round(tokenStart * fps);
+  return {x, y, tokenFrame};
+};
+
 const SubtitleBadge: React.FC<{
   shape?: string;
   color?: string;
@@ -326,12 +380,12 @@ const SubtitleBadge: React.FC<{
   const lift = interpolate(pop, [0, 1], [20, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const floatY = Math.sin(frame * 0.56) * -7;
   const driftX = Math.sin(frame * 0.38) * (shape === 'heart' ? 6 : 3);
-  const spinDurationFrames = Math.max(1, Math.round((spinDuration ?? 0.68) * fps));
+  const spinDurationFrames = Math.max(1, Math.round((spinDuration ?? 0.95) * fps));
   const spinProgress = clamp01(badgeFrame / spinDurationFrames);
   const spinEase = 1 - Math.pow(1 - spinProgress, 3);
   const heartSpinStart = -38;
-  const heartSpinEnd = spinDegrees ?? 720;
-  const heartWobble = Math.sin((badgeFrame + frame * 0.2) * 0.46) * (spinWobble ?? 16);
+  const heartSpinEnd = spinDegrees ?? 420;
+  const heartWobble = Math.sin((badgeFrame + frame * 0.2) * 0.46) * (spinWobble ?? 12);
   const rotate = shape === 'heart'
     ? heartSpinStart + (heartSpinEnd - heartSpinStart) * spinEase + heartWobble
     : shape === 'coin'
@@ -511,6 +565,47 @@ const SubtitleBadge: React.FC<{
   );
 };
 
+const TravellingSubtitleBadge: React.FC<{
+  cue: SubtitleCue;
+  tokens: Token[];
+  localFrame: number;
+  fps: number;
+}> = ({cue, tokens, localFrame, fps}) => {
+  const badgeShape = cue.effect.badgeShape ?? cue.effect.preset;
+  const badgeSize = cue.effect.badgeSize ?? 34;
+  const badgeText = cue.effect.badgeText ?? '♥';
+  const state = travellingBadgeState(cue, tokens, localFrame, fps);
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        left: state.x,
+        top: 0,
+        width: 1,
+        height: 1,
+        transform: `translateY(${state.y}px)`,
+        pointerEvents: 'none',
+        zIndex: 30,
+      }}
+    >
+      <SubtitleBadge
+        shape={badgeShape}
+        color={cue.effect.badgeColor ?? '#FF4D8D'}
+        background={cue.effect.badgeBackground}
+        size={badgeSize}
+        text={badgeText}
+        frame={localFrame}
+        fps={fps}
+        tokenFrame={state.tokenFrame}
+        spinDegrees={cue.effect.badgeSpinDegrees}
+        spinDuration={cue.effect.badgeSpinDuration}
+        spinWobble={cue.effect.badgeSpinWobble}
+      />
+    </span>
+  );
+};
+
 const SubtitleCueView: React.FC<{cue: SubtitleCue}> = ({cue}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
@@ -522,6 +617,8 @@ const SubtitleCueView: React.FC<{cue: SubtitleCue}> = ({cue}) => {
     : 0;
   const placement = positionStyle(cue, {width, height});
   const placementTransform = String(placement.transform ?? '');
+  const activeBadgeShape = cue.effect.badgeShape ?? cue.effect.preset;
+  const useTravellingHeartBadge = cue.effect.type === 'bounce_badge' && activeBadgeShape === 'heart';
 
   if (cue.effect.type === 'stack_pop') {
     const motion = tokenTransform(cue, 0, 1, localFrame, fps);
@@ -607,6 +704,9 @@ const SubtitleCueView: React.FC<{cue: SubtitleCue}> = ({cue}) => {
         transform: `${placementTransform} translateX(${wholeShake}px)`,
       }}
     >
+      {useTravellingHeartBadge ? (
+        <TravellingSubtitleBadge cue={cue} tokens={tokens} localFrame={localFrame} fps={fps} />
+      ) : null}
       {tokens.map((token, index) => {
         const motion = tokenTransform(cue, index, tokens.length, localFrame, fps, token);
         const highlighted = cue.effect.type === 'karaoke_highlight' && index <= active;
@@ -615,7 +715,7 @@ const SubtitleCueView: React.FC<{cue: SubtitleCue}> = ({cue}) => {
           : highlighted
           ? cue.effect.activeColor ?? cue.style.activeColor ?? '#FFE456'
           : cue.effect.inactiveColor ?? token.style.inactiveColor ?? token.style.color ?? cue.style.color ?? '#FFFFFF';
-        const showBadge = cue.effect.type === 'bounce_badge' && index === active;
+        const showBadge = cue.effect.type === 'bounce_badge' && !useTravellingHeartBadge && index === active;
         const badgeShape = cue.effect.badgeShape ?? cue.effect.preset;
         const badgeSize = cue.effect.badgeSize ?? (badgeShape === 'heart' ? 30 : 24);
         const badgeIsGlyph = badgeShape === 'heart' || badgeShape === 'spark';

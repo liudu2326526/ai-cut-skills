@@ -11,10 +11,11 @@ description: Create, validate, render, or integrate animated subtitle effect lay
 
 - 输入统一用 JSON 时间线。ASS/SRT/VTT 可以作为上游来源，但进入本 skill 前建议转成 JSON。
 - 警示语、免责声明默认不加动效。把 cue 标成 `role: "disclaimer"` / `"warning"` / `"legal"` 即可。
+- 主字幕只能出现一层。给前贴视频叠字幕动效前，必须先用 `aivideoeditor-pre-roll` 的 `--subtitle-render-mode motion` 生成不含普通主字幕的底片；不要把已经烧了普通主字幕的 `final.mp4` 当作 composite 输入。
 - 前贴里提到 `汽水音乐` 或 `汽水` 时必须走 `branding.words`，并设置 SodaFont、品牌绿、黑色描边和更大的字号。
 - Skill 已内置 `assets/fonts/SodaFont-Regular.otf` 和 `assets/fonts/FZLanTingHei-Medium.ttf`；默认模板会加载它们，外部流程也可以用 `fonts[]` 覆盖。
 - 用户要的“字从上往下出现”使用 `drop_in` 或 `drop_bounce`，不要用 `stack_pop`。`stack_pop` 是叠影弹出，保留兼容但不是这类效果。
-- 爱心跳字使用 `heart_jump`，现在会旋转跳跃并带残影。
+- 爱心跳字使用 `heart_jump`，现在会像参考短视频一样在每个字之间丝滑跳动，并带旋转和残影。
 - 金币跳字使用 `coin_jump`，现在使用金色圆片高光样式。
 - 歌词/高亮可用 `lyrics_gold`、`lyrics_cyan`、`lyrics_green`、`lyrics_pink`、`lyrics_orange`、`lyrics_violet`。
 
@@ -98,9 +99,10 @@ node "$CLI" render \
 建议流程：
 
 1. 普通字幕时间线生成后，转成字幕动效 JSON。
-2. 调用本 skill 渲染透明 alpha 字幕层。
-3. 前贴或正文合成阶段把 alpha 字幕层 overlay 到主视频。
-4. 图层顺序保持：主视频/素材 -> 字幕动效 -> logo -> 警示语。
+2. 如果是前贴，先用 `--subtitle-render-mode motion` 重新生成干净底片，保留右下角警示语但不烧普通主字幕。
+3. 调用本 skill 渲染透明 alpha 字幕层。
+4. 前贴或正文合成阶段把 alpha 字幕层 overlay 到主视频。
+5. 图层顺序保持：主视频/素材 -> 字幕动效 -> logo -> 警示语。
 
 最低可用集成只需要：画布、字体、字幕数组、`position`、`effectPreset` 和输出路径。
 

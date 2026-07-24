@@ -58,7 +58,7 @@
 - `drop_word`: 字从上往下落入字幕位置，适合用户给的那种短视频落字效果。
 - `stack_pop`: 叠影弹出，保留兼容；不要用它冒充落字。
 - `karaoke_highlight`: 类歌词逐字高亮。
-- `bounce_badge`: 当前字上方小图标跳动。爱心会旋转跳跃并带残影；金币会用更精致的金色圆片。爱心旋转可用 `badgeSpinDegrees`、`badgeSpinDuration`、`badgeSpinWobble` 调整。
+- `bounce_badge`: 当前字上方小图标跳动。爱心会像参考视频一样在字与字之间连续滑跳，并保留旋转和残影；金币会用更精致的金色圆片。爱心旋转可用 `badgeSpinDegrees`、`badgeSpinDuration`、`badgeSpinWobble` 调整，跳跃高度可用 `badgeTravelHeight` 调整。
 - `typewriter`: 打字机。
 - `shake_emphasis`: 轻微抖动强调。
 
@@ -67,7 +67,7 @@
 - `drop_in`: 标准落字入场。
 - `drop_bounce`: 弹性更强的旋转落字。
 - `pop_bold`: 逐字弹跳。
-- `heart_jump`: 字上方爱心旋转跳跃，带残影。
+- `heart_jump`: 单个爱心在每个字之间丝滑跳动，旋转并带残影。
 - `coin_jump`: 字上方金币跳动。
 - `spark_jump`: 字上方星光跳动。
 - `lyrics_gold`: 金色歌词高亮。

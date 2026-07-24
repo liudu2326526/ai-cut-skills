@@ -6,26 +6,33 @@ Map user-friendly requests to the local pre-roll runner config.
 
 Use `scriptText` when the user provides exact copy. This text becomes voiceover and the main subtitle.
 
+Main voiceover text and main subtitle text must stay identical after basic cleanup such as removing emphasis markers. Do not replace subtitle text with provider-normalized TTS frontend text; frontend/timestamp data is only for timing. The disclaimer is visual-only and must not be included in the voiceover.
+
 Use `copyTemplateType` plus `copyVariables` only when the user wants template-driven copy generation. If both `scriptText` and `copyTemplateType` are present, prefer `scriptText` for predictable output.
 
 Avoid putting disclaimer text into `scriptText`; disclaimer text should be visual-only.
 
 Reject or ask the user to rewrite copy that contains `红包` or `花不完`; these words must not appear in subtitles or voiceover.
 
-Use `voiceType` for one fixed voice. Use `voiceCandidates` when the caller wants voice variety; the runner can choose one candidate per task.
+Use `voiceType` for one fixed voice. Use `voiceCandidates` when the caller wants voice variety; the runner can choose one candidate per task. Prefer a small candidate pool for batches unless the user explicitly requests a fixed voice.
+
+In standalone local TTS mode, use `voiceName` for one Windows SAPI voice or `VoiceA|VoiceB` for a local voice pool. If local TTS is enabled and no `voiceName` is supplied, the runner will sample from installed Chinese SAPI voices when possible.
+
+For a faster-sounding ad read, compact long silent pauses in the generated voiceover instead of increasing speech speed. This pause-compaction pass is required for deliverables; if it fails, stop instead of using the raw paused voiceover. After pause compaction, use the compacted audio duration for main subtitle timing.
 
 ## Visual Type
 
 Use `visualTemplateId` for normal requests:
 
 - `decompression`: ASMR/decompression background.
+- `animal_grooming`: animal grooming / fur trimming / hoof trimming decompression background. Prefer scraped original clips for this type.
 - `scenery`: scenery background.
-- `ai_lifestyle`: adult lifestyle/music-use scene.
-- `ai_beauty_image`: generated adult female lifestyle image base.
+- `ai_beauty_image`: generated static adult female welfare poster/image base. This type must use `assetStrategy=generated_image`; the image may show an AI-generated front-facing adult woman, but must not use a real identifiable person, headphones, listening-to-music action, suggestive styling, watermark, QR code, or brand UI.
 - `presenter_finance`: dashboard/reward-growth visual.
 - `gold_reward`: coins/reward visual.
 - `chinese_fortune`: red-gold fortune visual.
-- `pet_funny`: pet/funny visual.
+- `mythic_fortune`: gold peacock / phoenix / dragon red-gold fortune visual.
+- `pet_funny`: clean pet/funny visual. Do not use pet-touching-music-card scenes or pet-watching-coin-growth overlays.
 
 Use `visualPromptText` only when the user gives a custom image/video prompt.
 
@@ -74,7 +81,21 @@ For `金币音乐新` screenshots, use small amounts under 10 yuan. Coin arrival
 - `generated`: Use AI video generation.
 - `scraped`: Use a provided source video URL list or a direct source URL.
 - `hybrid`: Try scraped source video and allow generated fallback if implemented by the server, but still provide scraped URLs yourself.
-- `generated_image`: Generate a still image and turn it into a video background.
+- `generated_image`: Generate a still image and turn it into a video background. In standalone mode this needs `imageApiKey`/`--image-api-key`, or a caller-provided `backgroundImage`.
+
+When `visualTemplateId=ai_beauty_image`, force `assetStrategy=generated_image`. The output background should be based on a static AI-generated image, not Seedance/AI video generation.
+
+For `ai_beauty_image`, a minimal standalone config looks like:
+
+```json
+{
+  "scriptText": "每天听歌15分钟，你的余额就会一直涨",
+  "visualTemplateId": "ai_beauty_image",
+  "assetStrategy": "generated_image",
+  "imageModel": "doubao-seedream-5-0-260128",
+  "imageSize": "864x1536"
+}
+```
 
 For revisions, choose the cleanest visual source from the previous result and submit that again. Prefer `revisionSourcePath`, `baseVideoPath`, `generatedVideoPath`, `scrapedVideoPath`, `imageVideoPath`, `backgroundVideo`, `backgroundImage`, or the original source URL. Do not pass `finalVideoPath`/`final.mp4` back as `backgroundVideo`, because the final file already has baked-in subtitles, logos, disclaimer text, motion effects, audio mix, and overlays.
 
@@ -85,14 +106,17 @@ For `scraped`, include at least `scrapedVideoType` and one of:
 - `scrapedVideoUrl`
 - `scrapedVideoUrls`
 
+Supported scraped video types include `decompression`, `animal_grooming`, `scenery`, and `pet_funny`. Use `animal_grooming` for decompression-style clips such as pet grooming, animal fur trimming, hoof trimming, or shearing. Useful search terms are `宠物修毛`, `动物剃毛`, `修毛`, `马蹄修剪`, `蹄甲修剪`, and `羊毛修剪`. Use `pet_funny` for clean pet/funny clips without UI overlays.
+
 Example:
 
 ```json
 {
   "assetStrategy": "scraped",
-  "scrapedVideoType": "decompression",
+  "scrapedVideoType": "animal_grooming",
   "scrapedVideoUrls": {
-    "decompression": ["https://example.com/source.mp4"],
+    "animal_grooming": ["https://example.com/source.mp4"],
+    "decompression": ["https://example.com/decompression-fallback.mp4"],
     "decompressionFallback": ["https://example.com/fallback.mp4"]
   }
 }

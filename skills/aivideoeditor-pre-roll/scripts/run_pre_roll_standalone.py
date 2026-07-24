@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import platform
 import random
 import re
 import shutil
+import statistics
 import struct
 import subprocess
 import sys
@@ -60,12 +62,85 @@ DEFAULT_SUBTITLE_BRAND_TERMS = ("汽水音乐", "汽水")
 FORBIDDEN_COPY_TERMS = ("红包", "花不完")
 DEFAULT_SUBTITLE_BRAND_LOGO_WIDTH_RATIO = 0.18
 DEFAULT_SUBTITLE_BRAND_LOGO_GAP_RATIO = 0.018
+DEFAULT_VISUAL_DURATION_SECONDS = 8.0
+DEFAULT_MAX_AUTO_VISUAL_DURATION_SECONDS = 10.0
 VISUAL_COMMON_NEGATIVE = (
     "不要出现任何文字、字幕、Logo、水印（包括 AI 生成水印）、品牌、UI 界面、按钮、二维码、"
     "清晰真人脸、真人露脸、擦边、纹身、知名 IP、影视剧、车牌、涉军涉政、箭头图标等元素。"
 )
+VOICEOVER_SILENCE_THRESHOLDS = ("-35dB", "-30dB", "-25dB")
+VOICEOVER_MIN_SILENCE_SECONDS = 0.35
+VOICEOVER_DYNAMIC_MIN_SILENCE_SECONDS = 0.18
+VOICEOVER_KEEP_SILENCE_SECONDS = 0.16
+VOICEOVER_MIN_REMOVE_SECONDS = 0.08
+VOICEOVER_CLUSTER_TOLERANCE_SECONDS = 0.30
+AUDIO_SUBTITLE_GAP_THRESHOLD = "-35dB"
+AUDIO_SUBTITLE_MIN_GAP_SECONDS = 0.06
+AUDIO_SUBTITLE_BOUNDARY_TOLERANCE_SECONDS = 0.85
+DEFAULT_WHISPER_MODEL = "tiny"
+DEFAULT_WHISPER_LANGUAGE = "Chinese"
+DEFAULT_TTS_ENGINE = "edge"
+DEFAULT_LOCAL_TTS_RATE = 1
+DEFAULT_EDGE_TTS_RATE = "+12%"
+DEFAULT_EDGE_TTS_VOLUME = "+0%"
+DEFAULT_EDGE_TTS_PITCH = "+3Hz"
+DEFAULT_EDGE_TTS_VOICE_CANDIDATES = (
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunxiaNeural",
+    "zh-CN-liaoning-XiaobeiNeural",
+    "zh-CN-shaanxi-XiaoniNeural",
+    "zh-CN-YunjianNeural",
+)
+EDGE_TTS_VOICE_ALIASES = {
+    "xiaoyi": "zh-CN-XiaoyiNeural",
+    "晓伊": "zh-CN-XiaoyiNeural",
+    "xiaoxiao": "zh-CN-XiaoxiaoNeural",
+    "晓晓": "zh-CN-XiaoxiaoNeural",
+    "yunxi": "zh-CN-YunxiNeural",
+    "云希": "zh-CN-YunxiNeural",
+    "yunxia": "zh-CN-YunxiaNeural",
+    "云夏": "zh-CN-YunxiaNeural",
+    "xiaobei": "zh-CN-liaoning-XiaobeiNeural",
+    "晓北": "zh-CN-liaoning-XiaobeiNeural",
+    "xiaoni": "zh-CN-shaanxi-XiaoniNeural",
+    "晓妮": "zh-CN-shaanxi-XiaoniNeural",
+    "yunjian": "zh-CN-YunjianNeural",
+    "云健": "zh-CN-YunjianNeural",
+}
+PREFERRED_LOCAL_TTS_VOICE_TOKENS = (
+    "xiaoxiao",
+    "xiaoyi",
+    "xiaobei",
+    "xiaomo",
+    "xiaoxuan",
+    "xiaohan",
+    "xiaorui",
+    "yunxi",
+    "yunjian",
+    "yunyang",
+    "yaoyao",
+    "xiaomei",
+    "tianxin",
+    "甜心",
+    "小美",
+    "晓晓",
+    "晓伊",
+    "晓北",
+    "晓墨",
+    "晓萱",
+    "晓涵",
+    "晓睿",
+    "云希",
+    "云健",
+    "云扬",
+    "瑶瑶",
+)
+LESS_PREFERRED_LOCAL_TTS_VOICE_TOKENS = ("huihui", "desktop")
 
 TERMINAL_ARK_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 
 VISUAL_SCENES: Dict[str, List[str]] = {
     "decompression": [
@@ -81,6 +156,14 @@ VISUAL_SCENES: Dict[str, List[str]] = {
         "沙画流动",
         "齿轮机械循环运动",
         "滚珠迷宫缓慢滚动",
+    ],
+    "animal_grooming": [
+        "宠物修毛时毛发被整齐修剪的特写",
+        "长毛动物被梳毛后毛发顺滑掉落",
+        "宠物剃毛机沿着毛发表面缓慢推进",
+        "羊毛修剪时大片毛毡自然剥离",
+        "马蹄修剪时边缘被仔细削平",
+        "动物脚底毛被小心修剪干净",
     ],
     "scenery": [
         "清晨山谷云雾缓慢流动",
@@ -101,20 +184,23 @@ VISUAL_SCENES: Dict[str, List[str]] = {
         "锦鲤穿过金色水纹，旁边出现通用领取卡片",
         "红金灯笼和金币雨形成发财氛围背景",
     ],
-    "pet_funny": [
-        "可爱猫咪看向通用奖励弹窗，画面轻松干净",
-        "小狗歪头看着金币增长浮层",
-        "宠物坐在沙发上听到提示音后做出好奇反应",
+    "mythic_fortune": [
+        "金孔雀展开华丽羽屏，周围有金币光效和红金祥云",
+        "金凤凰从红金云雾中展开翅膀，画面中心有通用福利卡片",
+        "金龙穿过祥云和金币雨，红金国风背景喜庆明亮",
+        "金孔雀与金凤凰同框，羽毛和金币光效形成发财氛围",
     ],
-    "ai_lifestyle": [
-        "成年用户在明亮客厅里戴耳机听音乐，只拍背影或手部局部，画面自然干净",
-        "成年用户在通勤路上轻松听音乐，只拍侧影或局部，旁边有通用福利卡片",
-        "成年用户在办公室休息区听歌放松，不露清晰正脸，画面明亮自然",
+    "pet_funny": [
+        "可爱猫咪突然探头看向镜头，画面轻松干净",
+        "小狗歪头做出疑惑表情，画面有趣但不杂乱",
+        "猫咪钻进纸袋后探出头，动作可爱自然",
+        "宠物坐在沙发上做出好奇反应",
+        "小狗追逐泡泡后停下看向镜头，画面轻松有趣",
     ],
     "ai_beauty_image": [
-        "成年女性在明亮咖啡店戴耳机听音乐，只拍背影或侧影，生活方式广告感",
-        "成年女性在居家客厅戴耳机听歌，不露清晰正脸，画面温暖干净",
-        "成年女性在阳光窗边听音乐，只拍手部和半身侧影，旁边有轻量福利浮层",
+        "成年女性正面自然看向镜头，明亮干净的福利海报风，旁边有通用金币增长浮层",
+        "成年女性半身正面微笑，背景是简洁浅色空间和通用奖励卡片",
+        "成年女性在阳光窗边拿着水杯正面出镜，旁边有轻量福利提示浮层",
     ],
 }
 
@@ -124,6 +210,13 @@ VISUAL_PROMPTS: Dict[str, str] = {
         "场景：{scene}。要求画面主体居中，特写镜头，光线柔和，细节丰富，动作连续自然，"
         "节奏舒缓。画面干净简洁，无人物对镜讲话，无剧情，无剧烈切换，不出现文字、字幕、"
         "Logo、水印、品牌、UI、按钮、二维码、金币、现金奖励提示、到账、App 页面等元素，方便后期叠加字幕和配音。"
+        + VISUAL_COMMON_NEGATIVE
+    ),
+    "animal_grooming": (
+        "生成一段适合短视频前贴背景的动物修毛解压视频。场景：{scene}。镜头以局部特写为主，"
+        "动作连续舒缓，能看到毛发、梳理、修剪或蹄甲修整带来的解压质感。"
+        "不要出现人物口播、讲解、对口型、危险虐待动作、血腥画面、品牌、Logo、水印、字幕、"
+        "App 页面、UI 按钮、二维码、金币、现金奖励提示或到账元素。"
         + VISUAL_COMMON_NEGATIVE
     ),
     "scenery": (
@@ -142,20 +235,22 @@ VISUAL_PROMPTS: Dict[str, str] = {
         "可以出现通用福利卡片和进度元素，但不要出现具体品牌页面、二维码、手机号、银行卡号、Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
-    "pet_funny": (
-        "生成一段轻松趣味的萌宠短视频背景。场景：{scene}。画面可爱、干净、节奏轻松，"
+    "mythic_fortune": (
+        "生成一段短视频前贴的红金神兽发财背景。场景：{scene}。画面重点是金孔雀、金凤凰、金龙、祥云、"
+        "元宝、金币、红金光效等元素，整体喜庆、贵气、明亮，有福利感和财富增长感。"
         "不要出现人物口播、讲解、对口型、二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
-    "ai_lifestyle": (
-        "生成一段短视频广告风格的生活方式背景。场景：{scene}。成年人物只用背影、侧影、手部或生活局部出镜，动作轻微，"
-        "不露清晰正脸，不讲话、不讲解、不对口型，不展示具体手机品牌界面，不出现二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
+    "pet_funny": (
+        "生成一段轻松趣味的萌宠短视频背景。场景：{scene}。画面可爱、干净、节奏轻松，"
+        "不要出现人物口播、讲解、对口型、音乐卡片、金币增长浮层、领取按钮、App 页面、二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
         + VISUAL_COMMON_NEGATIVE
     ),
     "ai_beauty_image": (
-        "生成一段适合前贴底片的生活方式画面。场景：{scene}。人物必须是成年女性，只拍背影、侧影、手部或生活局部，"
-        "不露清晰正脸，日常得体穿着，不暴露、不性感化，不直播、不带货、不对口型，不出现二维码、手机号、银行卡号、具体品牌 Logo 或水印。"
-        + VISUAL_COMMON_NEGATIVE
+        "生成一张静态 AI 福利海报图片，不要生成视频镜头感。场景：{scene}。人物必须是成年女性，可以正脸或半身正面出镜，"
+        "表情自然友好，穿着日常得体，不暴露、不性感化。人物不要戴耳机、不要表现听歌动作，"
+        "不直播、不带货、不讲解、不对口型，不出现二维码、手机号、银行卡号、明星脸、真实可识别人物、具体品牌 Logo 或水印。"
+        + VISUAL_COMMON_NEGATIVE.replace("清晰真人脸、真人露脸、", "")
     ),
 }
 
@@ -281,6 +376,626 @@ def ffprobe_duration(ffprobe_bin: str, path: Path) -> Optional[float]:
         return float(result.stdout.strip())
     except ValueError:
         return None
+
+
+def parse_voiceover_silence_ranges(log_text: str) -> List[Dict[str, float]]:
+    starts = [float(item) for item in re.findall(r"silence_start:\s*([0-9.]+)", log_text)]
+    ends = [
+        (float(end), float(duration))
+        for end, duration in re.findall(
+            r"silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)",
+            log_text,
+        )
+    ]
+    detected: List[Dict[str, float]] = []
+    for index, start in enumerate(starts):
+        if index >= len(ends):
+            break
+        end, duration = ends[index]
+        detected.append({"start": start, "end": end, "duration": duration})
+    return detected
+
+
+def run_voiceover_silencedetect(
+    *,
+    ffmpeg_bin: str,
+    input_path: Path,
+    noise: str,
+    minimum_seconds: float,
+) -> List[Dict[str, float]]:
+    result = subprocess.run(
+        [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(input_path),
+            "-af",
+            f"silencedetect=noise={noise}:d={minimum_seconds:.3f}",
+            "-f",
+            "null",
+            "-",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        raise RunnerError(f"voiceover-silencedetect failed with exit code {result.returncode}:\n{output}")
+    return parse_voiceover_silence_ranges(f"{result.stderr or ''}\n{result.stdout or ''}")
+
+
+def cluster_voiceover_pause_candidates(threshold_ranges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # 至少两个阈值都命中，才认为这个停顿适合自动删除。
+    raw_ranges = sorted(
+        threshold_ranges,
+        key=lambda item: (float(item["start"]) + float(item["end"])) / 2.0,
+    )
+    clusters: List[List[Dict[str, Any]]] = []
+    for item in raw_ranges:
+        center = (float(item["start"]) + float(item["end"])) / 2.0
+        if not clusters:
+            clusters.append([item])
+            continue
+        previous = clusters[-1][-1]
+        previous_center = (float(previous["start"]) + float(previous["end"])) / 2.0
+        if center - previous_center <= VOICEOVER_CLUSTER_TOLERANCE_SECONDS:
+            clusters[-1].append(item)
+        else:
+            clusters.append([item])
+
+    stable: List[Dict[str, Any]] = []
+    for cluster in clusters:
+        threshold_names = sorted({str(item.get("source") or "") for item in cluster})
+        if len(threshold_names) < 2:
+            continue
+        start = statistics.median([float(item["start"]) for item in cluster])
+        end = statistics.median([float(item["end"]) for item in cluster])
+        duration = max(0.0, end - start)
+        preserved = min(VOICEOVER_KEEP_SILENCE_SECONDS, duration)
+        remove_start = start + preserved / 2.0
+        remove_end = end - preserved / 2.0
+        removable = remove_end - remove_start >= VOICEOVER_MIN_REMOVE_SECONDS
+        stable.append(
+            {
+                "start": round(start, 4),
+                "end": round(end, 4),
+                "duration": round(duration, 4),
+                "thresholdAgreement": len(threshold_names),
+                "sources": threshold_names,
+                "recommendedForRemoval": removable,
+                "removeRange": [round(remove_start, 4), round(remove_end, 4)] if removable else None,
+            }
+        )
+    return stable
+
+
+def detect_voiceover_pause_ranges(*, ffmpeg_bin: str, input_path: Path) -> Dict[str, Any]:
+    threshold_reports: List[Dict[str, Any]] = []
+    threshold_ranges: List[Dict[str, Any]] = []
+    for index, noise in enumerate(VOICEOVER_SILENCE_THRESHOLDS):
+        minimum = VOICEOVER_MIN_SILENCE_SECONDS if index == 0 else VOICEOVER_DYNAMIC_MIN_SILENCE_SECONDS
+        ranges = run_voiceover_silencedetect(
+            ffmpeg_bin=ffmpeg_bin,
+            input_path=input_path,
+            noise=noise,
+            minimum_seconds=minimum,
+        )
+        threshold_reports.append(
+            {
+                "noise": noise,
+                "minimumSilenceSeconds": minimum,
+                "detectedSilences": ranges,
+            }
+        )
+        threshold_ranges.extend({**item, "source": f"threshold:{noise}"} for item in ranges)
+
+    stable = cluster_voiceover_pause_candidates(threshold_ranges)
+    remove_ranges = [item["removeRange"] for item in stable if item.get("removeRange")]
+    return {
+        "mode": "multi-threshold-cross-check",
+        "thresholds": threshold_reports,
+        "clusterToleranceSeconds": VOICEOVER_CLUSTER_TOLERANCE_SECONDS,
+        "minimumRemovalSeconds": VOICEOVER_MIN_REMOVE_SECONDS,
+        "preservedPauseSeconds": VOICEOVER_KEEP_SILENCE_SECONDS,
+        "stableCandidates": stable,
+        "stableCandidateCount": len(stable),
+        "removeRanges": remove_ranges,
+        "recommendedRemovalCount": len(remove_ranges),
+    }
+
+
+def normalize_pause_ranges(raw_ranges: Any) -> List[Tuple[float, float]]:
+    values = raw_ranges.get("removeRanges", []) if isinstance(raw_ranges, dict) else raw_ranges
+    if not isinstance(values, list):
+        return []
+
+    parsed: List[Tuple[float, float]] = []
+    for value in values:
+        try:
+            if isinstance(value, dict):
+                start, end = value.get("start"), value.get("end")
+            else:
+                start, end = value
+            start_value = max(0.0, float(start))
+            end_value = float(end)
+        except (TypeError, ValueError):
+            continue
+        if end_value > start_value:
+            parsed.append((start_value, end_value))
+
+    parsed.sort()
+    merged: List[Tuple[float, float]] = []
+    for start, end in parsed:
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def voiceover_keep_ranges(duration: float, removed: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    cursor = 0.0
+    kept: List[Tuple[float, float]] = []
+    for start, end in removed:
+        start = min(max(0.0, start), duration)
+        end = min(max(0.0, end), duration)
+        if start - cursor > 0.02:
+            kept.append((cursor, start))
+        cursor = max(cursor, end)
+    if duration - cursor > 0.02:
+        kept.append((cursor, duration))
+    return kept
+
+
+def trim_voiceover_pause_ranges(
+    *,
+    ffmpeg_bin: str,
+    input_path: Path,
+    output_path: Path,
+    duration: float,
+    remove_ranges: List[Tuple[float, float]],
+) -> None:
+    kept = voiceover_keep_ranges(duration, remove_ranges)
+    if not kept:
+        raise RunnerError("No audio remains after voiceover pause removal")
+
+    filters: List[str] = []
+    concat_inputs: List[str] = []
+    for index, (start, end) in enumerate(kept):
+        # 每段重新计时后再拼起来，字幕后面会按新音频时长重新算。
+        filters.append(f"[0:a]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS[a{index}]")
+        concat_inputs.append(f"[a{index}]")
+    filters.append(
+        "".join(concat_inputs)
+        + f"concat=n={len(kept)}:v=0:a=1[aout];"
+        + "[aout]aformat=sample_rates=44100:channel_layouts=stereo[audio]"
+    )
+
+    run(
+        [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-y",
+            "-i",
+            str(input_path),
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[audio]",
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ],
+        label="trim-voiceover-pauses",
+    )
+
+
+
+def build_audio_aligned_subtitle_events(
+    *,
+    ffmpeg_bin: str,
+    audio_path: Path,
+    text: str,
+    duration: float,
+    subtitle_config: Dict[str, Any],
+) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
+    max_lines = int(subtitle_config.get("maxLines") or 2)
+    max_chars = max(8, int(subtitle_config.get("maxCharsPerLine") or 14) * max(1, max_lines))
+    chunks = split_text_units(text, max_chars)
+    if len(chunks) <= 1 or not audio_path.exists() or duration <= 0:
+        return None, {
+            "mode": "text_weighted",
+            "aligned": False,
+            "reason": "not enough subtitle chunks or audio is missing",
+        }
+
+    try:
+        silence_ranges = run_voiceover_silencedetect(
+            ffmpeg_bin=ffmpeg_bin,
+            input_path=audio_path,
+            noise=AUDIO_SUBTITLE_GAP_THRESHOLD,
+            minimum_seconds=AUDIO_SUBTITLE_MIN_GAP_SECONDS,
+        )
+    except RunnerError as exc:
+        return None, {
+            "mode": "text_weighted",
+            "aligned": False,
+            "reason": f"audio pause detection failed: {exc}",
+        }
+
+    boundaries = []
+    total_duration = max(0.1, float(duration))
+    for item in silence_ranges:
+        start = float(item.get("start") or 0.0)
+        end = float(item.get("end") or 0.0)
+        center = (start + end) / 2.0
+        if 0.12 < center < total_duration - 0.12:
+            boundaries.append(center)
+    boundaries = sorted(dict.fromkeys(round(value, 3) for value in boundaries))
+    if not boundaries:
+        return None, {
+            "mode": "text_weighted",
+            "aligned": False,
+            "reason": "no usable speech gaps detected in compacted audio",
+            "detectedSilenceCount": len(silence_ranges),
+        }
+
+    weights = [max(0.2, estimate_text_duration(chunk, 0.2)) for chunk in chunks]
+    total_weight = sum(weights) or 1.0
+    expected_boundaries: List[float] = []
+    cursor_weight = 0.0
+    for weight in weights[:-1]:
+        cursor_weight += weight
+        expected_boundaries.append(total_duration * cursor_weight / total_weight)
+
+    selected_boundaries: List[float] = []
+    last_boundary = 0.0
+    for index, expected in enumerate(expected_boundaries):
+        remaining = len(expected_boundaries) - index - 1
+        upper_limit = total_duration - max(0.35, 0.35 * remaining)
+        candidates = [
+            value
+            for value in boundaries
+            if value > last_boundary + 0.25 and value < upper_limit
+        ]
+        if candidates:
+            nearest = min(candidates, key=lambda value: abs(value - expected))
+            if abs(nearest - expected) <= AUDIO_SUBTITLE_BOUNDARY_TOLERANCE_SECONDS:
+                boundary = nearest
+            else:
+                boundary = expected
+        else:
+            boundary = expected
+        boundary = max(last_boundary + 0.35, min(upper_limit, boundary))
+        selected_boundaries.append(round(boundary, 3))
+        last_boundary = boundary
+
+    events: List[Dict[str, Any]] = []
+    start = 0.0
+    for chunk, end in zip(chunks, selected_boundaries + [round(total_duration, 3)]):
+        safe_end = max(start + 0.05, min(total_duration, float(end)))
+        events.append({"start": round(start, 3), "end": round(safe_end, 3), "text": chunk})
+        start = safe_end
+        if start >= total_duration - 0.05:
+            break
+
+    if len(events) != len(chunks):
+        return None, {
+            "mode": "text_weighted",
+            "aligned": False,
+            "reason": "audio gap alignment produced an incomplete subtitle timeline",
+            "detectedBoundaries": boundaries,
+        }
+
+    return events, {
+        "mode": "audio_pause_boundaries",
+        "aligned": True,
+        "gapThreshold": AUDIO_SUBTITLE_GAP_THRESHOLD,
+        "minGapSeconds": AUDIO_SUBTITLE_MIN_GAP_SECONDS,
+        "detectedSilenceCount": len(silence_ranges),
+        "detectedBoundaries": boundaries,
+        "selectedBoundaries": selected_boundaries,
+        "reason": "subtitle boundaries were snapped to short pauses in the compacted voiceover audio",
+    }
+
+
+def subtitle_timing_weight(text: str) -> int:
+    # 只拿真正会被念出来的字估算进度，标点只影响停顿，不当成一个词。
+    spoken = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(text or ""))
+    return max(1, len(spoken))
+
+
+def collect_whisper_timing_units(data: Dict[str, Any], duration: float) -> List[Dict[str, Any]]:
+    units: List[Dict[str, Any]] = []
+    total_duration = max(0.1, float(duration or 0.0))
+    for segment in data.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        words = segment.get("words")
+        if isinstance(words, list) and words:
+            for word in words:
+                if not isinstance(word, dict):
+                    continue
+                raw_word = str(word.get("word") or word.get("text") or "").strip()
+                try:
+                    start = float(word.get("start"))
+                    end = float(word.get("end"))
+                except (TypeError, ValueError):
+                    continue
+                if not raw_word or end <= start:
+                    continue
+                units.append(
+                    {
+                        "text": raw_word,
+                        "start": max(0.0, min(total_duration, start)),
+                        "end": max(0.0, min(total_duration, end)),
+                        "weight": subtitle_timing_weight(raw_word),
+                    }
+                )
+            continue
+
+        raw_text = str(segment.get("text") or "").strip()
+        try:
+            start = float(segment.get("start"))
+            end = float(segment.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if raw_text and end > start:
+            units.append(
+                {
+                    "text": raw_text,
+                    "start": max(0.0, min(total_duration, start)),
+                    "end": max(0.0, min(total_duration, end)),
+                    "weight": subtitle_timing_weight(raw_text),
+                }
+            )
+
+    units.sort(key=lambda item: (float(item["start"]), float(item["end"])))
+    return [item for item in units if float(item["end"]) > float(item["start"])]
+
+
+def build_whisper_aligned_subtitle_events(
+    *,
+    whisper_bin: Optional[str],
+    ffmpeg_bin: Optional[str],
+    audio_path: Path,
+    text: str,
+    duration: float,
+    subtitle_config: Dict[str, Any],
+    work_dir: Path,
+    whisper_model: str,
+    whisper_language: str,
+) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
+    max_lines = int(subtitle_config.get("maxLines") or 2)
+    max_chars = max(8, int(subtitle_config.get("maxCharsPerLine") or 14) * max(1, max_lines))
+    chunks = split_text_units(text, max_chars)
+    if len(chunks) <= 1 or not audio_path.exists() or duration <= 0:
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "reason": "not enough subtitle chunks or audio is missing",
+        }
+
+    resolved_whisper = whisper_bin or shutil.which("whisper")
+    if not resolved_whisper:
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "reason": "whisper command not found",
+        }
+
+    output_dir = work_dir / "whisper"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        resolved_whisper,
+        str(audio_path),
+        "--model",
+        str(whisper_model or DEFAULT_WHISPER_MODEL),
+        "--language",
+        str(whisper_language or DEFAULT_WHISPER_LANGUAGE),
+        "--word_timestamps",
+        "True",
+        "--output_format",
+        "json",
+        "--output_dir",
+        str(output_dir),
+        "--fp16",
+        "False",
+        "--verbose",
+        "False",
+    ]
+    whisper_env = os.environ.copy()
+    whisper_env["PYTHONIOENCODING"] = "utf-8"
+    if ffmpeg_bin:
+        ffmpeg_parent = str(Path(ffmpeg_bin).expanduser().resolve().parent)
+        whisper_env["PATH"] = ffmpeg_parent + os.pathsep + whisper_env.get("PATH", "")
+    result = subprocess.run(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=whisper_env,
+        check=False,
+    )
+    if result.returncode != 0:
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "command": command,
+            "reason": f"whisper failed with exit code {result.returncode}: {output[-1200:]}",
+        }
+
+    json_path = output_dir / f"{audio_path.stem}.json"
+    if not json_path.exists():
+        candidates = sorted(output_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        json_path = candidates[0] if candidates else json_path
+    if not json_path.exists():
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "command": command,
+            "reason": "whisper did not produce a json result",
+            "stdout": (result.stdout or "")[-1200:],
+            "stderr": (result.stderr or "")[-1200:],
+        }
+
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "path": str(json_path),
+            "reason": f"cannot read whisper json: {exc}",
+        }
+
+    units = collect_whisper_timing_units(data, duration)
+    if not units:
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "path": str(json_path),
+            "reason": "whisper result has no usable word or segment timestamps",
+        }
+
+    unit_weights = [max(1, int(unit.get("weight") or 1)) for unit in units]
+    cumulative_unit_weights: List[int] = []
+    cursor_weight = 0
+    for weight in unit_weights:
+        cursor_weight += weight
+        cumulative_unit_weights.append(cursor_weight)
+    total_unit_weight = cumulative_unit_weights[-1] or 1
+
+    chunk_weights = [subtitle_timing_weight(chunk) for chunk in chunks]
+    total_chunk_weight = sum(chunk_weights) or 1
+    events: List[Dict[str, Any]] = []
+    unit_start_index = 0
+    chunk_cursor_weight = 0
+    total_duration = max(0.1, float(duration or 0.0))
+
+    for index, chunk in enumerate(chunks):
+        chunk_cursor_weight += chunk_weights[index]
+        if index == len(chunks) - 1:
+            unit_end_index = len(units) - 1
+        else:
+            target = total_unit_weight * chunk_cursor_weight / total_chunk_weight
+            unit_end_index = unit_start_index
+            while unit_end_index < len(cumulative_unit_weights) - 1 and cumulative_unit_weights[unit_end_index] < target:
+                unit_end_index += 1
+
+            remaining_chunks = len(chunks) - index - 1
+            max_end_index = len(units) - remaining_chunks - 1
+            unit_end_index = max(unit_start_index, min(max_end_index, unit_end_index))
+
+        if unit_start_index >= len(units):
+            break
+        start = float(units[unit_start_index]["start"])
+        end = float(units[unit_end_index]["end"])
+        if unit_end_index + 1 < len(units):
+            # 字幕可以在词尾多停一小会儿，但不要盖到下一段开口。
+            next_start = float(units[unit_end_index + 1]["start"])
+            end = min(next_start, end + 0.12)
+        end = max(start + 0.12, min(total_duration, end))
+        events.append({"start": round(start, 3), "end": round(end, 3), "text": chunk})
+        unit_start_index = unit_end_index + 1
+
+    if len(events) != len(chunks):
+        return None, {
+            "mode": "whisper_word_timestamps",
+            "aligned": False,
+            "path": str(json_path),
+            "reason": "whisper alignment could not cover every subtitle chunk",
+            "unitCount": len(units),
+            "chunkCount": len(chunks),
+        }
+
+    return events, {
+        "mode": "whisper_word_timestamps",
+        "aligned": True,
+        "path": str(json_path),
+        "model": str(whisper_model or DEFAULT_WHISPER_MODEL),
+        "language": str(whisper_language or DEFAULT_WHISPER_LANGUAGE),
+        "unitCount": len(units),
+        "chunkCount": len(chunks),
+        "reason": "subtitle boundaries use Whisper word timestamps from the compacted voiceover audio",
+    }
+
+
+def compact_audio_silence(
+    *,
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    input_path: Path,
+    output_path: Path,
+) -> Dict[str, Any]:
+    raw_duration = ffprobe_duration(ffprobe_bin, input_path) or 0.0
+    if not input_path.exists() or raw_duration <= 0:
+        return {
+            "applied": False,
+            "inputPath": str(input_path),
+            "outputPath": str(input_path),
+            "rawDuration": raw_duration or None,
+            "duration": raw_duration or None,
+            "reason": "voiceover file missing or duration invalid",
+        }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        detection = detect_voiceover_pause_ranges(ffmpeg_bin=ffmpeg_bin, input_path=input_path)
+        remove_ranges = normalize_pause_ranges(detection.get("removeRanges", []))
+        if remove_ranges:
+            trim_voiceover_pause_ranges(
+                ffmpeg_bin=ffmpeg_bin,
+                input_path=input_path,
+                output_path=output_path,
+                duration=raw_duration,
+                remove_ranges=remove_ranges,
+            )
+        else:
+            shutil.copy2(input_path, output_path)
+    except RunnerError as exc:
+        raise RunnerError(f"Voiceover silence removal is required but failed: {exc}") from exc
+
+    compact_duration = ffprobe_duration(ffprobe_bin, output_path) or 0.0
+    if compact_duration <= 0:
+        raise RunnerError("Voiceover silence removal is required but produced invalid audio")
+
+    if compact_duration >= raw_duration - 0.05:
+        shutil.copy2(input_path, output_path)
+        return {
+            "applied": False,
+            "required": True,
+            "processed": True,
+            "inputPath": str(input_path),
+            "outputPath": str(output_path),
+            "rawDuration": round(raw_duration, 3),
+            "duration": round(raw_duration, 3),
+            "detection": detection,
+            "reason": "required silence-removal pass completed; no long pause detected",
+        }
+
+    return {
+        "applied": True,
+        "required": True,
+        "processed": True,
+        "inputPath": str(input_path),
+        "outputPath": str(output_path),
+        "rawDuration": round(raw_duration, 3),
+        "duration": round(compact_duration, 3),
+        "removedSeconds": round(max(0.0, raw_duration - compact_duration), 3),
+        "thresholds": list(VOICEOVER_SILENCE_THRESHOLDS),
+        "minSilenceSeconds": VOICEOVER_MIN_SILENCE_SECONDS,
+        "dynamicMinSilenceSeconds": VOICEOVER_DYNAMIC_MIN_SILENCE_SECONDS,
+        "keptSilenceSeconds": VOICEOVER_KEEP_SILENCE_SECONDS,
+        "minRemoveSeconds": VOICEOVER_MIN_REMOVE_SECONDS,
+        "removeRanges": [[round(start, 4), round(end, 4)] for start, end in remove_ranges],
+        "detection": detection,
+        "reason": "removed long voiceover pauses",
+    }
 
 
 def clamp_subtitle_offset(offset: float, duration: float, max_auto_offset: float) -> float:
@@ -659,14 +1374,29 @@ def normalize_visual_type(value: Optional[str]) -> str:
     aliases = {
         "解压": "decompression",
         "解压类": "decompression",
+        "动物修毛": "animal_grooming",
+        "宠物修毛": "animal_grooming",
+        "修毛": "animal_grooming",
+        "剃毛": "animal_grooming",
+        "马蹄修剪": "animal_grooming",
+        "蹄甲修剪": "animal_grooming",
         "风景": "scenery",
         "金币": "gold_reward",
         "金币类型": "gold_reward",
         "发财": "chinese_fortune",
         "国风": "chinese_fortune",
+        "金孔雀": "mythic_fortune",
+        "孔雀": "mythic_fortune",
+        "凤凰": "mythic_fortune",
+        "金龙": "mythic_fortune",
+        "神兽": "mythic_fortune",
         "宠物": "pet_funny",
+        "萌宠": "pet_funny",
         "美女": "ai_beauty_image",
-        "生活": "ai_lifestyle",
+        "生活": "gold_reward",
+        "人物": "gold_reward",
+        "听歌": "gold_reward",
+        "ai_lifestyle": "gold_reward",
     }
     normalized = str(value or "decompression").strip()
     return aliases.get(normalized, normalized if normalized in VISUAL_SCENES else "decompression")
@@ -682,11 +1412,17 @@ def choose_scene(visual_type: str, seed: Optional[str]) -> str:
 
 
 def build_visual_prompt(visual_type: str, scene: str, override: Optional[str]) -> str:
+    safety_text = (
+        VISUAL_COMMON_NEGATIVE.replace("清晰真人脸、真人露脸、", "")
+        if visual_type == "ai_beauty_image"
+        else VISUAL_COMMON_NEGATIVE
+    )
+
     def with_safety(prompt: str) -> str:
         prompt = str(prompt or "").strip()
-        if not prompt or VISUAL_COMMON_NEGATIVE in prompt:
+        if not prompt or safety_text in prompt:
             return prompt
-        return f"{prompt}{VISUAL_COMMON_NEGATIVE}"
+        return f"{prompt}{safety_text}"
 
     if override:
         return with_safety(override)
@@ -840,6 +1576,9 @@ def generate_ass(
     disclaimer_config: Dict[str, Any],
     brand_text: Optional[str],
     subtitle_offset: float = 0.0,
+    subtitle_events: Optional[List[Dict[str, Any]]] = None,
+    subtitle_timing_source: Optional[str] = None,
+    include_main_subtitles: bool = True,
 ) -> Dict[str, Any]:
     font_name = str(subtitle_config.get("fontName") or DEFAULT_BODY_FONT_NAME)
     brand_font_name = str(subtitle_config.get("brandFontName") or DEFAULT_BRAND_FONT_NAME)
@@ -913,29 +1652,44 @@ def generate_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
+    supplied_events = [event for event in (subtitle_events or []) if str(event.get("text") or "").strip()]
     chunks = split_text_units(text, max_chars)
-    total_weight = sum(max(1, len(chunk)) for chunk in chunks) or 1
-    cursor = float(subtitle_offset or 0.0)
-    available_duration = max(0.45, duration - cursor)
     events: List[Dict[str, Any]] = []
-    for index, chunk in enumerate(chunks):
-        if index == len(chunks) - 1:
-            end = duration
-        else:
-            share = max(0.75, available_duration * max(1, len(chunk)) / total_weight)
-            end = min(duration, cursor + share)
-        if end - cursor < 0.45:
-            end = min(duration, cursor + 0.45)
-        event_start = max(0.0, cursor)
-        event_end = max(event_start + 0.05, min(duration, end))
-        lines.append(
-            f"Dialogue: 5,{ass_time(event_start)},{ass_time(event_end)},Main,,0,0,0,,"
-            f"{ass_escape_with_brand_font(chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
-        )
-        events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": chunk})
-        cursor = end
-        if cursor >= duration - 0.05:
-            break
+    if supplied_events:
+        for item in supplied_events:
+            chunk = str(item.get("text") or "").strip()
+            event_start = max(0.0, min(duration - 0.05, float(item.get("start") or 0.0) + float(subtitle_offset or 0.0)))
+            raw_end = float(item.get("end") or event_start + 0.45) + float(subtitle_offset or 0.0)
+            event_end = max(event_start + 0.05, min(duration, raw_end))
+            if include_main_subtitles:
+                lines.append(
+                    f"Dialogue: 5,{ass_time(event_start)},{ass_time(event_end)},Main,,0,0,0,,"
+                    f"{ass_escape_with_brand_font(chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
+                )
+            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": chunk})
+    else:
+        total_weight = sum(max(1, len(chunk)) for chunk in chunks) or 1
+        cursor = float(subtitle_offset or 0.0)
+        available_duration = max(0.45, duration - cursor)
+        for index, chunk in enumerate(chunks):
+            if index == len(chunks) - 1:
+                end = duration
+            else:
+                share = max(0.75, available_duration * max(1, len(chunk)) / total_weight)
+                end = min(duration, cursor + share)
+            if end - cursor < 0.45:
+                end = min(duration, cursor + 0.45)
+            event_start = max(0.0, cursor)
+            event_end = max(event_start + 0.05, min(duration, end))
+            if include_main_subtitles:
+                lines.append(
+                    f"Dialogue: 5,{ass_time(event_start)},{ass_time(event_end)},Main,,0,0,0,,"
+                    f"{ass_escape_with_brand_font(chunk, font_name, brand_font_name, body_color=primary_color, body_outline_color=outline_color, brand_color=brand_primary_color, brand_outline_color=brand_outline_color, brand_font_scale=brand_font_scale)}"
+                )
+            events.append({"start": round(event_start, 3), "end": round(event_end, 3), "text": chunk})
+            cursor = end
+            if cursor >= duration - 0.05:
+                break
 
     if brand_text:
         lines.append(
@@ -951,6 +1705,11 @@ def generate_ass(
     return {
         "path": str(output_path),
         "events": events,
+        "subtitleText": text,
+        "mainSubtitleBurned": bool(include_main_subtitles),
+        "timingSource": subtitle_timing_source or ("audio_pause_boundaries" if supplied_events else "text_weighted"),
+        "voiceoverText": text,
+        "exactTextPolicy": "main subtitles use the same scriptText sent to local/provided voiceover preparation",
         "position": pos["position"],
         "fontName": font_name,
         "brandFontName": brand_font_name,
@@ -1103,10 +1862,164 @@ def prepare_fonts_dir(
     return output_dir
 
 
-def choose_voice_name(voice_name: Optional[str], seed: Optional[str] = None) -> Optional[str]:
-    if not voice_name:
-        return None
-    candidates = [part.strip() for part in str(voice_name).split("|") if part.strip()]
+def list_local_sapi_voice_names() -> List[str]:
+    if platform.system().lower() != "windows":
+        return []
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        return []
+    script = (
+        "$OutputEncoding=[System.Text.Encoding]::UTF8;"
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+        "Add-Type -AssemblyName System.Speech;"
+        "$synth=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+        "try {"
+        "  $synth.GetInstalledVoices() | ForEach-Object {"
+        "    Write-Output ($_.VoiceInfo.Name + \"`t\" + $_.VoiceInfo.Culture.Name)"
+        "  }"
+        "} finally { $synth.Dispose() }"
+    )
+    encoded_command = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_command],
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    all_voices: List[str] = []
+    chinese_voices: List[str] = []
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        name, _, culture = line.partition("\t")
+        clean_name = name.strip()
+        if not clean_name:
+            continue
+        all_voices.append(clean_name)
+        if culture.strip().lower().startswith("zh"):
+            chinese_voices.append(clean_name)
+    return list(dict.fromkeys(chinese_voices or all_voices))
+
+
+def lively_local_tts_voice_score(voice_name: str) -> int:
+    lowered = str(voice_name or "").lower()
+    score = 0
+    for offset, token in enumerate(PREFERRED_LOCAL_TTS_VOICE_TOKENS):
+        if str(token).lower() in lowered:
+            score += 100 - offset
+    if "natural" in lowered or "online" in lowered:
+        score += 20
+    for token in LESS_PREFERRED_LOCAL_TTS_VOICE_TOKENS:
+        if token in lowered:
+            score -= 80
+    return score
+
+
+def prefer_lively_local_tts_voices(voice_names: List[str]) -> List[str]:
+    scored = [
+        (lively_local_tts_voice_score(name), -index, name)
+        for index, name in enumerate(voice_names or [])
+        if str(name or "").strip()
+    ]
+    lively = [(score, order, name) for score, order, name in scored if score > 0]
+    lively.sort(reverse=True)
+    return [name for _, _, name in lively]
+
+
+def split_voice_candidates(raw: Optional[str]) -> List[str]:
+    candidates: List[str] = []
+    for part in re.split(r"[|,，]", str(raw or "")):
+        clean = part.strip()
+        if clean:
+            candidates.append(clean)
+    return list(dict.fromkeys(candidates))
+
+
+def normalize_tts_engine(value: Optional[str]) -> str:
+    clean = str(value or DEFAULT_TTS_ENGINE).strip().lower().replace("_", "-")
+    if clean in {"edge", "edge-tts", "neural", "online"}:
+        return "edge"
+    raise RunnerError("Generated pre-roll voiceover must use Edge Neural TTS. Set --tts-engine edge or provide --voiceover-path.")
+
+
+def normalize_subtitle_render_mode(value: Optional[str]) -> str:
+    clean = str(value or "burn").strip().lower().replace("-", "_")
+    if clean in {"burn", "ass", "normal", "plain"}:
+        return "burn"
+    if clean in {"motion", "motion_external", "motion_layer", "animated", "animated_external", "none", "no_main", "disclaimer_only"}:
+        return "motion_external"
+    raise RunnerError("--subtitle-render-mode must be burn or motion")
+
+
+def edge_tts_available() -> bool:
+    return importlib.util.find_spec("edge_tts") is not None
+
+
+def normalize_edge_voice_name(candidate: str) -> str:
+    clean = str(candidate or "").strip()
+    if not clean:
+        return ""
+    lowered = clean.lower()
+    if lowered.startswith("zh-cn-") and lowered.endswith("neural"):
+        return clean
+    for token, voice in EDGE_TTS_VOICE_ALIASES.items():
+        if str(token).lower() in lowered:
+            return voice
+    return clean
+
+
+def choose_edge_voice(edge_voice: Optional[str], voice_name: Optional[str], seed: Optional[str]) -> str:
+    raw_candidates = split_voice_candidates(edge_voice) or split_voice_candidates(voice_name)
+    if not raw_candidates:
+        raw_candidates = list(DEFAULT_EDGE_TTS_VOICE_CANDIDATES)
+    normalized = [normalize_edge_voice_name(candidate) for candidate in raw_candidates]
+    candidates = [
+        voice
+        for voice in dict.fromkeys(normalized)
+        if voice in DEFAULT_EDGE_TTS_VOICE_CANDIDATES or normalize_edge_voice_name(voice) in DEFAULT_EDGE_TTS_VOICE_CANDIDATES
+    ]
+    if not candidates:
+        raise RunnerError(
+            "Edge TTS voice must be a lively Chinese voice, for example "
+            "zh-CN-XiaoyiNeural, zh-CN-XiaoxiaoNeural, zh-CN-YunxiNeural, "
+            "zh-CN-liaoning-XiaobeiNeural, or their Xiaoyi/Xiaoxiao/Yunxi aliases."
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+    rng = random.Random(seed or f"edge-tts-{time.time_ns()}")
+    return rng.choice(candidates)
+
+
+def choose_voice_name(
+    voice_name: Optional[str],
+    seed: Optional[str] = None,
+    *,
+    use_installed_defaults: bool = False,
+) -> Optional[str]:
+    candidates = [part.strip() for part in str(voice_name or "").split("|") if part.strip()]
+    if candidates:
+        allowed = prefer_lively_local_tts_voices(candidates)
+        if not allowed:
+            raise RunnerError(
+                "--voice-name only accepts lively Chinese voices for pre-roll. "
+                "Use Xiaoxiao/Yunxi/Xiaoyi-style voices, or provide --voiceover-path with an approved lively narration."
+            )
+        candidates = allowed
+    if not candidates and use_installed_defaults:
+        # 前贴只允许活泼人声；没有合适音色就失败，避免退回机械系统音。
+        candidates = prefer_lively_local_tts_voices(list_local_sapi_voice_names())
+        if not candidates:
+            raise RunnerError(
+                "No lively Chinese Windows TTS voice was found. Install/select a Xiaoxiao/Yunxi/Xiaoyi-style voice "
+                "with --voice-name, or pass a prepared lively narration through --voiceover-path."
+            )
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -1126,6 +2039,174 @@ def download_url(url: str, destination: Path, timeout: int = 300) -> Path:
     if not destination.exists() or destination.stat().st_size <= 0:
         raise RunnerError(f"Downloaded file is empty: {destination}")
     return destination
+
+
+def clean_image_base_url(base_url: Optional[str]) -> str:
+    cleaned = (base_url or "https://api.openai.com").rstrip("/")
+    if cleaned.endswith("/v1"):
+        return cleaned[:-3]
+    return cleaned
+
+
+def infer_image_provider(base_url: str, model: str) -> str:
+    text = f"{base_url} {model}".lower()
+    if "volces.com" in text or "ark" in text or model.startswith("doubao-seedream"):
+        return "volcengine"
+    return "openai"
+
+
+def image_generation_url(base_url: str, provider: str) -> str:
+    if provider == "volcengine":
+        return f"{base_url}/images/generations"
+    return f"{base_url}/v1/images/generations"
+
+
+def image_request_json(
+    method: str,
+    url: str,
+    api_key: str,
+    body: Optional[Dict[str, Any]] = None,
+    *,
+    timeout: int = 240,
+) -> Dict[str, Any]:
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "AIVideoEditor-PreRoll-Standalone/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else {}
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        raise RunnerError(f"Image API error HTTP {exc.code}: {text}") from exc
+    except urllib.error.URLError as exc:
+        raise RunnerError(f"Image API request failed: {exc}") from exc
+
+
+def extract_image_ref(payload: Dict[str, Any]) -> Optional[str]:
+    item = (payload.get("data") or [{}])[0]
+    image_ref = item.get("b64_json") or item.get("b64") or item.get("url")
+    if isinstance(image_ref, list):
+        image_ref = image_ref[0] if image_ref else None
+    return str(image_ref).strip() if image_ref else None
+
+
+def extract_provider_task_id(payload: Dict[str, Any]) -> Optional[str]:
+    item = (payload.get("data") or [{}])[0]
+    task_id = item.get("task_id") or item.get("taskId")
+    return str(task_id).strip() if task_id else None
+
+
+def extract_async_task_image_url(task_data: Dict[str, Any]) -> Optional[str]:
+    images = ((task_data.get("result") or {}).get("images") or [])
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        url_value = image.get("url")
+        if isinstance(url_value, list) and url_value:
+            return str(url_value[0])
+        if isinstance(url_value, str) and url_value:
+            return url_value
+    return None
+
+
+def write_image_ref(image_ref: str, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if image_ref.startswith(("http://", "https://")):
+        return download_url(image_ref, output_path)
+
+    encoded = image_ref.split(",", 1)[1] if image_ref.startswith("data:image/") else image_ref
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except Exception as exc:
+        raise RunnerError("Image API response is not a valid URL or base64 image") from exc
+    output_path.write_bytes(image_bytes)
+    if output_path.stat().st_size <= 0:
+        raise RunnerError(f"Generated image file is empty: {output_path}")
+    return output_path
+
+
+def generate_ai_image(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    prompt: str,
+    size: str,
+    quality: str,
+    output_format: str,
+    output_path: Path,
+    timeout_seconds: int,
+    poll_interval: float,
+) -> Dict[str, Any]:
+    if not api_key:
+        raise RunnerError("assetStrategy=generated_image requires --image-api-key, or provide --background-image.")
+
+    cleaned_base_url = clean_image_base_url(base_url)
+    provider = infer_image_provider(cleaned_base_url, model)
+    payload: Dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+    }
+    if provider == "volcengine":
+        payload.update({"size": size, "response_format": "url", "watermark": False})
+    else:
+        payload.update({"n": 1, "size": size, "quality": quality, "output_format": output_format})
+
+    response = image_request_json(
+        "POST",
+        image_generation_url(cleaned_base_url, provider),
+        api_key,
+        payload,
+        timeout=timeout_seconds,
+    )
+    image_ref = extract_image_ref(response)
+    provider_task_id = extract_provider_task_id(response)
+
+    if provider_task_id and not image_ref:
+        deadline = time.time() + timeout_seconds
+        current: Dict[str, Any] = response
+        while time.time() < deadline:
+            time.sleep(poll_interval)
+            current = image_request_json(
+                "GET",
+                f"{cleaned_base_url}/v1/tasks/{provider_task_id}",
+                api_key,
+                timeout=timeout_seconds,
+            )
+            task_data = current.get("data") if isinstance(current.get("data"), dict) else current
+            status = str(task_data.get("status") or "").lower()
+            print(f"[image] task={provider_task_id} status={status}")
+            if status == "completed":
+                image_ref = extract_async_task_image_url(task_data)
+                break
+            if status in TERMINAL_IMAGE_STATUSES:
+                raise RunnerError(f"Image task failed: status={status}, response={current}")
+
+    if not image_ref:
+        raise RunnerError(f"Image API response does not contain image data: {response}")
+
+    image_path = write_image_ref(image_ref, output_path)
+    return {
+        "path": str(image_path),
+        "model": model,
+        "provider": provider,
+        "baseUrl": cleaned_base_url,
+        "size": size,
+        "quality": quality,
+        "outputFormat": output_format,
+        "providerTaskId": provider_task_id,
+        "prompt": prompt,
+    }
 
 
 def ark_request_json(method: str, url: str, api_key: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1317,7 +2398,7 @@ def generate_local_sapi_tts(text: str, output_path: Path, voice_name: Optional[s
         encoded_voice = base64.b64encode(voice_name.encode("utf-8")).decode("ascii")
         voice_clause = (
             f"$voice=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_voice}'));"
-            "try { $synth.SelectVoice($voice) } catch {};"
+            "$synth.SelectVoice($voice);"
         )
     script = (
         "Add-Type -AssemblyName System.Speech;"
@@ -1325,7 +2406,7 @@ def generate_local_sapi_tts(text: str, output_path: Path, voice_name: Optional[s
         f"$out=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_output}'));"
         "$synth=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
         f"{voice_clause}"
-        "$synth.Rate=0;"
+        f"$synth.Rate={DEFAULT_LOCAL_TTS_RATE};"
         "$synth.Volume=100;"
         "$synth.SetOutputToWaveFile($out);"
         "$synth.Speak($text);"
@@ -1347,6 +2428,46 @@ def generate_local_sapi_tts(text: str, output_path: Path, voice_name: Optional[s
     return output_path
 
 
+def generate_edge_tts(
+    text: str,
+    output_path: Path,
+    *,
+    voice_name: str,
+    rate: str,
+    volume: str,
+    pitch: str,
+) -> Path:
+    if not edge_tts_available():
+        raise RunnerError(
+            "edge-tts is not installed in this Python environment. Install it with `python -m pip install edge-tts`, "
+            "or pass an approved lively narration through --voiceover-path."
+        )
+    text_path = output_path.with_suffix(".edge.txt")
+    media_path = output_path.with_suffix(".edge.mp3")
+    text_path.write_text(text, encoding="utf-8")
+    command = [
+        sys.executable,
+        "-m",
+        "edge_tts",
+        "-f",
+        str(text_path),
+        "-v",
+        voice_name,
+        "--rate",
+        str(rate or DEFAULT_EDGE_TTS_RATE),
+        "--volume",
+        str(volume or DEFAULT_EDGE_TTS_VOLUME),
+        "--pitch",
+        str(pitch or DEFAULT_EDGE_TTS_PITCH),
+        "--write-media",
+        str(media_path),
+    ]
+    run(command, label="edge-tts")
+    if not media_path.exists() or media_path.stat().st_size <= 0:
+        raise RunnerError("edge-tts did not produce an audio file")
+    return media_path
+
+
 def make_audio(
     *,
     ffmpeg_bin: str,
@@ -1355,48 +2476,73 @@ def make_audio(
     duration: float,
     voiceover_path: Optional[Path],
     generate_dubbing: bool,
+    tts_engine: str,
     local_tts: bool,
     voice_name: Optional[str],
+    edge_voice: Optional[str],
+    edge_rate: str,
+    edge_volume: str,
+    edge_pitch: str,
     voice_seed: Optional[str],
     output_path: Path,
 ) -> Dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     source_path: Optional[Path] = None
     mode = "silent"
-    selected_voice_name = choose_voice_name(voice_name, voice_seed)
+    selected_voice_name: Optional[str] = None
+    effective_tts_engine = normalize_tts_engine(tts_engine)
     if voiceover_path:
         if not voiceover_path.exists():
             raise RunnerError(f"Voiceover path not found: {voiceover_path}")
         source_path = voiceover_path
         mode = "provided"
-    elif generate_dubbing and local_tts:
-        source_path = generate_local_sapi_tts(script_text, output_path.with_suffix(".tts.wav"), selected_voice_name)
-        if source_path:
-            mode = "local_sapi"
+    elif generate_dubbing and effective_tts_engine == "edge":
+        selected_voice_name = choose_edge_voice(edge_voice, voice_name, voice_seed)
+        source_path = generate_edge_tts(
+            script_text,
+            output_path.with_suffix(".edge.wav"),
+            voice_name=selected_voice_name,
+            rate=edge_rate,
+            volume=edge_volume,
+            pitch=edge_pitch,
+        )
+        mode = "edge_tts"
+    elif generate_dubbing and effective_tts_engine != "edge":
+        raise RunnerError("Generated pre-roll voiceover must use Edge Neural TTS.")
 
     if source_path:
+        normalized_path = output_path.with_suffix(".normalized.wav")
         command = [
             ffmpeg_bin,
             "-hide_banner",
             "-y",
             "-i",
             str(source_path),
-            "-t",
-            f"{duration:.3f}",
             "-af",
             "loudnorm=I=-16:LRA=7:TP=-1.5,aformat=sample_rates=44100:channel_layouts=stereo",
             "-c:a",
             "pcm_s16le",
-            str(output_path),
+            str(normalized_path),
         ]
         run(command, label="prepare-voiceover")
-        audio_duration = ffprobe_duration(ffprobe_bin, output_path) or duration
+        silence_detail = compact_audio_silence(
+            ffmpeg_bin=ffmpeg_bin,
+            ffprobe_bin=ffprobe_bin,
+            input_path=normalized_path,
+            output_path=output_path,
+        )
+        audio_duration = float(silence_detail.get("duration") or 0.0) or ffprobe_duration(ffprobe_bin, output_path) or duration
         return {
             "mode": mode,
             "path": str(output_path),
             "sourcePath": str(source_path),
+            "rawPreparedPath": str(normalized_path),
             "duration": round(audio_duration, 3),
-            "voiceName": selected_voice_name if mode == "local_sapi" else None,
+            "voiceName": selected_voice_name if mode == "edge_tts" else None,
+            "ttsEngine": mode if mode == "edge_tts" else None,
+            "edgeRate": edge_rate if mode == "edge_tts" else None,
+            "edgePitch": edge_pitch if mode == "edge_tts" else None,
+            "silenceRemoval": silence_detail,
         }
 
     command = [
@@ -1754,7 +2900,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--script-text", default=None, help="Main spoken copy and subtitle text.")
     parser.add_argument("--prompt-text", default=None, help="Custom visual prompt for AI video generation.")
     parser.add_argument("--visual-template-id", default="decompression")
-    parser.add_argument("--asset-strategy", default="generated", choices=("generated", "local_video", "local_image", "scraped"))
+    parser.add_argument("--asset-strategy", default="generated", choices=("generated", "generated_image", "local_video", "local_image", "scraped"))
     parser.add_argument("--background-video", default=None, help="Local background MP4/MOV. Preferred for local production.")
     parser.add_argument("--background-image", default=None, help="Local background image. It will be converted to a video background.")
     parser.add_argument("--background-url", default=None, help="Direct downloadable video URL. Used for scraped/simple remote source mode.")
@@ -1766,16 +2912,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-bundled-assets", dest="use_bundled_assets", action="store_false", help="Do not use bundled 汽水物料-新 defaults.")
     parser.set_defaults(use_bundled_assets=True)
     parser.add_argument("--material-selection-json", default=None, help="Optional JSON file describing the chosen overlay/material items to validate semantically.")
-    parser.add_argument("--duration", type=float, default=8.0)
+    parser.add_argument("--duration", type=float, default=DEFAULT_VISUAL_DURATION_SECONDS)
     parser.add_argument("--ratio", default="9:16")
     parser.add_argument("--resolution", default="720p")
     parser.add_argument("--subtitle-position", default="lower_center")
+    parser.add_argument(
+        "--subtitle-render-mode",
+        default="burn",
+        choices=("burn", "motion", "motion_external", "disclaimer_only", "none"),
+        help="burn writes normal main ASS subtitles. motion/motion_external keeps only disclaimer in ASS so animated subtitle overlays do not duplicate captions.",
+    )
     parser.add_argument("--subtitle-font-size", type=int, default=None)
     parser.add_argument("--subtitle-config-json", default=None)
     parser.add_argument("--subtitle-audio-sync", default=None, choices=("auto", "off"), help="Shift main subtitles after detected voiceover leading silence.")
     parser.add_argument("--subtitle-offset-seconds", type=float, default=None, help="Manual main subtitle time offset. Positive delays subtitles; negative shows them earlier.")
     parser.add_argument("--subtitle-speech-threshold-db", type=float, default=None, help="Silence threshold for automatic subtitle sync.")
     parser.add_argument("--subtitle-max-auto-offset-seconds", type=float, default=None, help="Largest automatic subtitle delay allowed.")
+    parser.add_argument(
+        "--subtitle-timing-source",
+        default=None,
+        choices=("auto", "whisper", "audio_pause_boundaries", "text_weighted"),
+        help="Main subtitle timing source. auto tries Whisper first, then audio pause boundaries.",
+    )
+    parser.add_argument("--whisper-bin", default=None, help="Optional whisper command path for word-level subtitle timing.")
+    parser.add_argument("--whisper-model", default=DEFAULT_WHISPER_MODEL, help="Whisper model used for subtitle timing.")
+    parser.add_argument("--whisper-language", default=DEFAULT_WHISPER_LANGUAGE, help="Whisper language used for subtitle timing.")
     parser.add_argument("--body-font-name", default=None, help="ASS family name for normal subtitle text.")
     parser.add_argument("--brand-font-name", default=None, help="ASS family name for 汽水音乐/汽水 subtitle text.")
     parser.add_argument("--brand-primary-color", default=None, help="ASS/RGB fill color for 汽水音乐/汽水 subtitle text.")
@@ -1810,13 +2971,56 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--voiceover-path", default=None, help="Optional caller-provided voiceover audio.")
     parser.add_argument("--generate-dubbing", action="store_true", default=True)
     parser.add_argument("--no-generate-dubbing", dest="generate_dubbing", action="store_false")
-    parser.add_argument("--local-tts", action="store_true", help="Use Windows SAPI TTS when available. Otherwise silent audio is used.")
-    parser.add_argument("--voice-name", default=None, help="Optional Windows SAPI voice name. Use | to provide multiple candidates and let the runner pick one.")
+    parser.add_argument("--tts-engine", default=os.getenv("PRE_ROLL_TTS_ENGINE", DEFAULT_TTS_ENGINE), help="Voiceover engine. Generated pre-roll voiceover must use edge.")
+    parser.add_argument("--local-tts", action="store_true", help="Deprecated compatibility flag. Generated pre-roll voiceover must use Edge Neural TTS.")
+    parser.add_argument("--voice-name", default=None, help="Optional lively voice name/alias. Use | to provide multiple candidates.")
+    parser.add_argument("--edge-voice", default=None, help="Optional Edge Neural voice or | separated lively candidates, e.g. zh-CN-XiaoyiNeural|zh-CN-XiaoxiaoNeural.")
+    parser.add_argument("--edge-rate", default=DEFAULT_EDGE_TTS_RATE, help="Edge TTS speaking rate, e.g. +12%.")
+    parser.add_argument("--edge-volume", default=DEFAULT_EDGE_TTS_VOLUME, help="Edge TTS volume, e.g. +0%.")
+    parser.add_argument("--edge-pitch", default=DEFAULT_EDGE_TTS_PITCH, help="Edge TTS pitch, e.g. +3Hz.")
     parser.add_argument("--ark-api-key", default=os.getenv("ARK_API_KEY") or os.getenv("AIVIDEOEDITOR_ARK_API_KEY"))
     parser.add_argument("--ark-base-url", default=os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"))
     parser.add_argument("--ark-model", default=os.getenv("SEEDANCE_MODEL", "doubao-seedance-1-0-pro-250528"))
     parser.add_argument("--ark-poll-interval", type=float, default=5.0)
     parser.add_argument("--ark-timeout-seconds", type=int, default=900)
+    parser.add_argument(
+        "--image-api-key",
+        "--openai-image-api-key",
+        dest="image_api_key",
+        default=(
+            os.getenv("OPENAI_IMAGE_API_KEY")
+            or os.getenv("APIMART_API_KEY")
+            or os.getenv("ARK_IMAGE_API_KEY")
+        ),
+        help="OpenAI/Ark compatible image API key for assetStrategy=generated_image.",
+    )
+    parser.add_argument(
+        "--image-base-url",
+        "--openai-image-base-url",
+        dest="image_base_url",
+        default=(
+            os.getenv("OPENAI_IMAGE_BASE_URL")
+            or os.getenv("APIMART_BASE_URL")
+            or os.getenv("ARK_IMAGE_BASE_URL")
+            or os.getenv("VOLCENGINE_IMAGE_BASE_URL")
+        ),
+    )
+    parser.add_argument(
+        "--image-model",
+        "--openai-image-model",
+        dest="image_model",
+        default=(
+            os.getenv("OPENAI_IMAGE_MODEL")
+            or os.getenv("APIMART_IMAGE_MODEL")
+            or os.getenv("ARK_IMAGE_MODEL")
+            or os.getenv("VOLCENGINE_IMAGE_MODEL")
+        ),
+    )
+    parser.add_argument("--image-size", default="864x1536")
+    parser.add_argument("--image-quality", default="low")
+    parser.add_argument("--image-output-format", default="png")
+    parser.add_argument("--image-timeout-seconds", type=int, default=240)
+    parser.add_argument("--image-poll-interval", type=float, default=5.0)
     parser.add_argument("--seed", default=None)
     parser.add_argument("--output", default=None, help="Final MP4 path. Defaults to ./pre_roll_outputs/<run-id>/final.mp4")
     parser.add_argument("--output-json", default=None, help="Write result JSON here.")
@@ -1848,10 +3052,16 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         "duration": "duration",
         "ratio": "ratio",
         "resolution": "resolution",
+        "subtitleRenderMode": "subtitle_render_mode",
+        "mainSubtitleMode": "subtitle_render_mode",
         "subtitleAudioSync": "subtitle_audio_sync",
         "subtitleOffsetSeconds": "subtitle_offset_seconds",
         "subtitleSpeechThresholdDb": "subtitle_speech_threshold_db",
         "subtitleMaxAutoOffsetSeconds": "subtitle_max_auto_offset_seconds",
+        "subtitleTimingSource": "subtitle_timing_source",
+        "whisperBin": "whisper_bin",
+        "whisperModel": "whisper_model",
+        "whisperLanguage": "whisper_language",
         "includeDisclaimerSubtitle": "include_disclaimer_subtitle",
         "disclaimerText": "disclaimer_text",
         "brandText": "brand_text",
@@ -1868,8 +3078,13 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         "subtitleLogoTerms": "subtitle_logo_terms",
         "voiceoverPath": "voiceover_path",
         "generateDubbing": "generate_dubbing",
+        "ttsEngine": "tts_engine",
         "localTts": "local_tts",
         "voiceName": "voice_name",
+        "edgeVoice": "edge_voice",
+        "edgeRate": "edge_rate",
+        "edgeVolume": "edge_volume",
+        "edgePitch": "edge_pitch",
         "bodyFontName": "body_font_name",
         "brandFontName": "brand_font_name",
         "brandPrimaryColor": "brand_primary_color",
@@ -1881,6 +3096,18 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         "arkApiKey": "ark_api_key",
         "arkBaseUrl": "ark_base_url",
         "arkModel": "ark_model",
+        "imageApiKey": "image_api_key",
+        "openaiImageApiKey": "image_api_key",
+        "imageBaseUrl": "image_base_url",
+        "openaiImageBaseUrl": "image_base_url",
+        "imageModel": "image_model",
+        "openaiImageModel": "image_model",
+        "imageGenerationModel": "image_model",
+        "imageSize": "image_size",
+        "imageQuality": "image_quality",
+        "imageOutputFormat": "image_output_format",
+        "imageTimeoutSeconds": "image_timeout_seconds",
+        "imagePollInterval": "image_poll_interval",
         "seed": "seed",
         "output": "output",
         "outputJson": "output_json",
@@ -1946,10 +3173,31 @@ def resolve_asset_manifest_path(asset_manifest: Optional[str], asset_root: Optio
     return None
 
 
+def cli_flag_supplied(*flags: str) -> bool:
+    for token in sys.argv[1:]:
+        for flag in flags:
+            if token == flag or token.startswith(f"{flag}="):
+                return True
+    return False
+
+
+def resolve_visual_duration(requested_duration: Any, duration_specified: bool) -> float:
+    try:
+        duration = float(requested_duration or DEFAULT_VISUAL_DURATION_SECONDS)
+    except (TypeError, ValueError):
+        duration = DEFAULT_VISUAL_DURATION_SECONDS
+    duration = max(1.0, duration)
+    if not duration_specified:
+        return min(duration, DEFAULT_MAX_AUTO_VISUAL_DURATION_SECONDS)
+    return duration
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    args = apply_config(args, load_json_file(args.config))
+    config = load_json_file(args.config)
+    duration_specified = cli_flag_supplied("--duration") or config.get("duration") is not None
+    args = apply_config(args, config)
 
     script_text = str(args.script_text or "").strip()
     if not script_text:
@@ -1975,6 +3223,22 @@ def main() -> int:
     visual_type = normalize_visual_type(args.visual_template_id)
     scene = choose_scene(visual_type, args.seed)
     visual_prompt = build_visual_prompt(visual_type, scene, args.prompt_text)
+    effective_asset_strategy = "generated_image" if visual_type == "ai_beauty_image" else args.asset_strategy
+    image_api_key = args.image_api_key
+    image_base_url = args.image_base_url
+    image_model = args.image_model
+    if effective_asset_strategy == "generated_image" and not image_api_key and args.ark_api_key:
+        image_api_key = args.ark_api_key
+    if not image_base_url:
+        if image_api_key and image_api_key == args.ark_api_key:
+            image_base_url = args.ark_base_url
+        else:
+            image_base_url = "https://api.openai.com"
+    if not image_model:
+        if "volces.com" in str(image_base_url).lower() or "ark" in str(image_base_url).lower():
+            image_model = "doubao-seedream-5-0-260128"
+        else:
+            image_model = "gpt-image-2"
 
     subtitle_config = merge_dict(
         {
@@ -2033,6 +3297,16 @@ def main() -> int:
         else subtitle_config.get("maxAutoOffsetSeconds", 1.5)
     )
     subtitle_max_auto_offset_seconds = max(0.0, float(raw_max_auto_offset))
+    subtitle_timing_source = str(
+        args.subtitle_timing_source
+        or subtitle_config.get("timingSource")
+        or subtitle_config.get("subtitleTimingSource")
+        or "auto"
+    ).strip().lower()
+    if subtitle_timing_source not in {"auto", "whisper", "audio_pause_boundaries", "text_weighted"}:
+        raise RunnerError("--subtitle-timing-source must be auto, whisper, audio_pause_boundaries, or text_weighted")
+    subtitle_render_mode = normalize_subtitle_render_mode(args.subtitle_render_mode)
+    include_main_subtitles = subtitle_render_mode == "burn"
 
     disclaimer_config = merge_dict(
         {
@@ -2065,15 +3339,18 @@ def main() -> int:
     subtitle_logo_opacity = clamp_float(args.subtitle_logo_opacity, 1.0, 0.0, 1.0)
     subtitle_logo_max_overlays = max(0, min(30, int(args.subtitle_logo_max_overlays or 0)))
     width, height = output_size(args.resolution, args.ratio)
-    estimated_duration = estimate_text_duration(script_text, args.duration)
+    estimated_duration = resolve_visual_duration(args.duration, duration_specified)
+    copy_estimated_duration = estimate_text_duration(script_text, 3.0)
 
     voiceover_path = normalize_media_input(args.voiceover_path)
+    tts_engine = normalize_tts_engine(args.tts_engine)
+    if args.local_tts:
+        raise RunnerError("--local-tts is no longer allowed for pre-roll voiceover. Generated voiceover must use Edge Neural TTS.")
     ffprobe_bin: Optional[str] = None
+    known_voiceover_duration: Optional[float] = None
     if voiceover_path and not args.dry_run:
         ffprobe_bin = require_binary("ffprobe", args.ffprobe)
-        voice_duration = ffprobe_duration(ffprobe_bin, voiceover_path)
-        if voice_duration:
-            estimated_duration = max(estimated_duration, voice_duration)
+        known_voiceover_duration = ffprobe_duration(ffprobe_bin, voiceover_path)
 
     ark_result: Optional[Dict[str, Any]] = None
     background_video = normalize_media_input(args.background_video)
@@ -2147,7 +3424,38 @@ def main() -> int:
             raise RunnerError(json.dumps(asset_preflight_report, ensure_ascii=False, indent=2))
 
     if (
-        args.asset_strategy == "generated"
+        effective_asset_strategy == "generated_image"
+        and not args.dry_run
+        and (background_video or background_url)
+    ):
+        raise RunnerError(
+            "assetStrategy=generated_image must use a static image source. "
+            "Use --background-image or provide --image-api-key to generate one."
+        )
+
+    image_generation_result: Optional[Dict[str, Any]] = None
+    if (
+        effective_asset_strategy == "generated_image"
+        and not args.dry_run
+        and not background_image
+    ):
+        image_output = work_dir / f"generated_image.{str(args.image_output_format or 'png').lstrip('.')}"
+        image_generation_result = generate_ai_image(
+            api_key=str(image_api_key or ""),
+            base_url=str(image_base_url or ""),
+            model=str(image_model or ""),
+            prompt=visual_prompt,
+            size=str(args.image_size or "864x1536"),
+            quality=str(args.image_quality or "low"),
+            output_format=str(args.image_output_format or "png"),
+            output_path=image_output,
+            timeout_seconds=int(args.image_timeout_seconds),
+            poll_interval=float(args.image_poll_interval),
+        )
+        background_image = image_output
+
+    if (
+        effective_asset_strategy == "generated"
         and not args.dry_run
         and not background_video
         and not background_image
@@ -2164,7 +3472,7 @@ def main() -> int:
             base_url=args.ark_base_url,
             model=args.ark_model,
             prompt=visual_prompt,
-            duration=int(max(4, min(math.ceil(args.duration), 15))),
+            duration=int(max(4, min(math.ceil(estimated_duration), 15))),
             ratio=args.ratio,
             resolution=args.resolution,
             output_path=ark_output,
@@ -2173,14 +3481,45 @@ def main() -> int:
         )
         background_video = ark_output
 
+    preview_voice_candidates: List[str] = []
+    preview_selected_voice_name: Optional[str] = None
+    if args.generate_dubbing and not voiceover_path and tts_engine == "edge":
+        if not edge_tts_available():
+            raise RunnerError(
+                "edge-tts is required for lively default narration. Install it with `python -m pip install edge-tts`, "
+                "or provide --voiceover-path."
+            )
+        raw_edge_candidates = split_voice_candidates(args.edge_voice) or split_voice_candidates(args.voice_name)
+        preview_voice_candidates = [
+            normalize_edge_voice_name(candidate)
+            for candidate in (raw_edge_candidates or list(DEFAULT_EDGE_TTS_VOICE_CANDIDATES))
+        ]
+        preview_voice_candidates = [
+            voice for voice in dict.fromkeys(preview_voice_candidates) if voice in DEFAULT_EDGE_TTS_VOICE_CANDIDATES
+        ]
+        preview_selected_voice_name = choose_edge_voice(args.edge_voice, args.voice_name, args.seed)
+
     preview = {
         "mode": "standalone",
         "runId": run_id,
         "scriptText": script_text,
+        "voiceoverText": script_text,
+        "subtitleText": script_text,
+        "exactTextPolicy": "voiceover and main subtitles use this same text; visual-only disclaimer is separate",
         "visualTemplateId": visual_type,
         "scene": scene,
         "visualPrompt": visual_prompt,
-        "assetStrategy": args.asset_strategy,
+        "assetStrategy": effective_asset_strategy,
+        "requestedAssetStrategy": args.asset_strategy,
+        "imageGeneration": {
+            "apiKeyConfigured": bool(image_api_key),
+            "baseUrl": clean_image_base_url(str(image_base_url or "")),
+            "model": image_model,
+            "size": args.image_size,
+            "quality": args.image_quality,
+            "outputFormat": args.image_output_format,
+            "canGenerateStaticImage": bool(effective_asset_strategy == "generated_image" and image_api_key),
+        },
         "realVideoContentRequired": True,
         "revisionSourcePolicy": (
             "For revisions, rerender from a clean source such as baseVideoPath/revisionSourcePath "
@@ -2190,7 +3529,8 @@ def main() -> int:
             background_video
             or background_image
             or background_url
-            or (args.asset_strategy == "generated" and args.ark_api_key)
+            or (effective_asset_strategy == "generated" and args.ark_api_key)
+            or (effective_asset_strategy == "generated_image" and image_api_key)
         ),
         "assetRoot": str(asset_root) if asset_root else None,
         "assetManifest": str(asset_manifest_path) if asset_manifest_path else None,
@@ -2199,12 +3539,30 @@ def main() -> int:
         "useBundledAssets": bool(args.use_bundled_assets),
         "bundledMaterialRoot": str(BUNDLED_MATERIAL_ROOT) if BUNDLED_MATERIAL_ROOT.exists() else None,
         "size": {"width": width, "height": height, "ratio": args.ratio, "resolution": args.resolution},
+        "durationSpecified": bool(duration_specified),
+        "visualDuration": round(estimated_duration, 3),
+        "copyEstimatedDuration": round(copy_estimated_duration, 3),
+        "providedVoiceoverDuration": round(known_voiceover_duration, 3) if known_voiceover_duration else None,
         "estimatedDuration": round(estimated_duration, 3),
         "subtitleConfig": subtitle_config,
+        "subtitleRenderMode": subtitle_render_mode,
+        "mainSubtitleBurned": include_main_subtitles,
+        "mainSubtitlePolicy": (
+            "normal ASS main subtitles are burned into the video"
+            if include_main_subtitles
+            else "main ASS subtitles are suppressed; use subtitle-motion-effects for the only main subtitle layer"
+        ),
         "subtitleAudioSync": subtitle_audio_sync,
         "subtitleOffsetSeconds": subtitle_offset_seconds,
         "subtitleSpeechThresholdDb": subtitle_speech_threshold_db,
         "subtitleMaxAutoOffsetSeconds": subtitle_max_auto_offset_seconds,
+        "subtitleTimingSource": subtitle_timing_source,
+        "whisper": {
+            "bin": args.whisper_bin,
+            "model": args.whisper_model,
+            "language": args.whisper_language,
+            "available": bool(args.whisper_bin or shutil.which("whisper")),
+        },
         "includeDisclaimerSubtitle": args.include_disclaimer_subtitle,
         "disclaimerText": args.disclaimer_text if args.include_disclaimer_subtitle else None,
         "mandatoryDisclaimer": {
@@ -2242,6 +3600,20 @@ def main() -> int:
         "bodyFontPath": str(body_font_path) if body_font_path else None,
         "brandFontPath": str(brand_font_path) if brand_font_path else None,
         "voiceName": args.voice_name,
+        "edgeVoice": args.edge_voice,
+        "voicePolicy": {
+            "mode": "edge_neural_only",
+            "ttsEngine": tts_engine,
+            "defaultTtsEngine": DEFAULT_TTS_ENGINE,
+            "selectedVoiceName": preview_selected_voice_name,
+            "edgeRate": args.edge_rate,
+            "edgeVolume": args.edge_volume,
+            "edgePitch": args.edge_pitch,
+            "edgeTtsAvailable": edge_tts_available() if tts_engine == "edge" else None,
+            "defaultEdgeCandidates": list(DEFAULT_EDGE_TTS_VOICE_CANDIDATES),
+            "resolvedLivelyCandidates": preview_voice_candidates,
+            "requiresLivelyVoice": bool(args.generate_dubbing and not voiceover_path),
+        },
         "logoSelection": {
             "mode": (
                 "direct"
@@ -2258,6 +3630,7 @@ def main() -> int:
         },
         "backgroundVideo": str(background_video) if background_video else None,
         "backgroundImage": str(background_image) if background_image else None,
+        "generatedImagePath": str(image_generation_result.get("path")) if image_generation_result else None,
         "backgroundUrl": background_url,
         "voiceoverPath": str(voiceover_path) if voiceover_path else None,
         "materialSelectionJson": str(Path(args.material_selection_json).expanduser().resolve()) if args.material_selection_json else None,
@@ -2301,7 +3674,7 @@ def main() -> int:
         "originalVisualPath": base_detail.get("path"),
         "originalVisualType": base_detail.get("type"),
         "generatedVideoPath": str(ark_result.get("path")) if ark_result and ark_result.get("path") else None,
-        "scrapedVideoPath": str(base_detail.get("path")) if args.asset_strategy == "scraped" else None,
+        "scrapedVideoPath": str(base_detail.get("path")) if effective_asset_strategy == "scraped" else None,
         "rule": (
             "Use revisionSourcePath/baseVideoPath or the original clean visual source for revisions; "
             "do not reprocess finalVideoPath because final outputs already contain baked-in overlays."
@@ -2322,12 +3695,53 @@ def main() -> int:
         duration=estimated_duration,
         voiceover_path=voiceover_path,
         generate_dubbing=bool(args.generate_dubbing),
+        tts_engine=tts_engine,
         local_tts=bool(args.local_tts),
         voice_name=args.voice_name,
+        edge_voice=args.edge_voice,
+        edge_rate=args.edge_rate,
+        edge_volume=args.edge_volume,
+        edge_pitch=args.edge_pitch,
         voice_seed=args.seed,
         output_path=audio_path,
     )
-    final_duration = max(estimated_duration, float(audio_detail.get("duration") or estimated_duration))
+    audio_duration = float(audio_detail.get("duration") or 0.0)
+    if audio_detail.get("mode") != "silent" and audio_duration > 0:
+        final_duration = audio_duration
+    else:
+        final_duration = estimated_duration
+    base_duration = ffprobe_duration(ffprobe_bin, base_video) or estimated_duration
+    if final_duration > base_duration + 0.05:
+        base_detail = make_base_video(
+            ffmpeg_bin=ffmpeg_bin,
+            background_video=background_video,
+            background_image=background_image,
+            background_url=background_url,
+            visual_type=visual_type,
+            duration=final_duration,
+            width=width,
+            height=height,
+            output_path=base_video,
+            work_dir=work_dir,
+        )
+        clean_source_detail.update(
+            {
+                "revisionSourcePath": str(base_video),
+                "baseVideoPath": str(base_video),
+                "originalVisualPath": base_detail.get("path"),
+                "originalVisualType": base_detail.get("type"),
+                "durationExtendedForVoiceover": True,
+                "extendedDuration": round(float(final_duration), 3),
+            }
+        )
+        logo_selection = choose_logo_variant(
+            ffmpeg_bin=ffmpeg_bin,
+            base_video=base_video,
+            logo_path=direct_logo_path,
+            logo_light_path=logo_light_path,
+            logo_dark_path=logo_dark_path,
+            threshold=float(args.logo_luma_threshold),
+        )
     subtitle_sync_detail = resolve_subtitle_audio_sync(
         ffmpeg_bin=ffmpeg_bin,
         audio_path=audio_path,
@@ -2338,6 +3752,67 @@ def main() -> int:
         max_auto_offset=subtitle_max_auto_offset_seconds,
         duration=final_duration,
     )
+    subtitle_events: Optional[List[Dict[str, Any]]] = None
+    subtitle_timing_detail: Dict[str, Any] = {
+        "mode": "text_weighted",
+        "aligned": False,
+        "reason": "subtitle timing not attempted yet",
+    }
+    subtitle_timing_attempts: List[Dict[str, Any]] = []
+    subtitle_offset_for_ass = float(subtitle_sync_detail.get("offsetSeconds") or 0.0)
+    subtitle_timing_source_used: Optional[str] = None
+    if audio_detail.get("mode") == "silent":
+        subtitle_timing_detail = {
+            "mode": "text_weighted",
+            "aligned": False,
+            "reason": "silent audio has no speech pauses",
+        }
+    else:
+        if subtitle_timing_source in {"auto", "whisper"}:
+            subtitle_events, subtitle_timing_detail = build_whisper_aligned_subtitle_events(
+                whisper_bin=args.whisper_bin,
+                ffmpeg_bin=ffmpeg_bin,
+                audio_path=audio_path,
+                text=script_text,
+                duration=final_duration,
+                subtitle_config=subtitle_config,
+                work_dir=work_dir,
+                whisper_model=args.whisper_model,
+                whisper_language=args.whisper_language,
+            )
+            subtitle_timing_attempts.append(subtitle_timing_detail)
+            if subtitle_events:
+                subtitle_timing_source_used = "whisper_word_timestamps"
+                # Whisper 的 start/end 已经落在最终音频时间轴上；自动开头静音 offset 不再叠一次。
+                subtitle_offset_for_ass = (
+                    float(subtitle_sync_detail.get("offsetSeconds") or 0.0)
+                    if subtitle_sync_detail.get("mode") == "manual"
+                    else 0.0
+                )
+            elif subtitle_timing_source == "whisper":
+                raise RunnerError(f"Whisper subtitle timing failed: {subtitle_timing_detail.get('reason')}")
+
+        if not subtitle_events and subtitle_timing_source in {"auto", "audio_pause_boundaries"}:
+            subtitle_events, subtitle_timing_detail = build_audio_aligned_subtitle_events(
+                ffmpeg_bin=ffmpeg_bin,
+                audio_path=audio_path,
+                text=script_text,
+                duration=final_duration,
+                subtitle_config=subtitle_config,
+            )
+            subtitle_timing_attempts.append(subtitle_timing_detail)
+            if subtitle_events:
+                subtitle_timing_source_used = "audio_pause_boundaries"
+
+        if not subtitle_events:
+            subtitle_timing_detail = {
+                "mode": "text_weighted",
+                "aligned": False,
+                "reason": "fell back to text weighted subtitle timing",
+                "requestedTimingSource": subtitle_timing_source,
+            }
+            subtitle_timing_attempts.append(subtitle_timing_detail)
+            subtitle_timing_source_used = "text_weighted"
     subtitle_detail = generate_ass(
         output_path=ass_path,
         text=script_text,
@@ -2348,8 +3823,13 @@ def main() -> int:
         disclaimer_text=args.disclaimer_text if args.include_disclaimer_subtitle else None,
         disclaimer_config=disclaimer_config,
         brand_text=args.brand_text,
-        subtitle_offset=float(subtitle_sync_detail.get("offsetSeconds") or 0.0),
+        subtitle_offset=subtitle_offset_for_ass,
+        subtitle_events=subtitle_events,
+        subtitle_timing_source=subtitle_timing_source_used,
+        include_main_subtitles=include_main_subtitles,
     )
+    subtitle_detail["audioTiming"] = subtitle_timing_detail
+    subtitle_detail["timingAttempts"] = subtitle_timing_attempts
     compose_detail = compose_final(
         ffmpeg_bin=ffmpeg_bin,
         base_video=base_video,
@@ -2400,6 +3880,7 @@ def main() -> int:
             "originalVisualPath": clean_source_detail["originalVisualPath"],
             "originalVisualType": clean_source_detail["originalVisualType"],
             "generatedVideoPath": clean_source_detail["generatedVideoPath"],
+            "generatedImagePath": str(image_generation_result.get("path")) if image_generation_result else None,
             "scrapedVideoPath": clean_source_detail["scrapedVideoPath"],
             "coverPath": cover,
             "subtitlePath": str(ass_path),
@@ -2407,6 +3888,7 @@ def main() -> int:
             "workDir": str(work_dir),
         },
         "steps": {
+            "imageGeneration": image_generation_result,
             "arkGeneration": ark_result,
             "background": base_detail,
             "cleanRevisionSource": clean_source_detail,
