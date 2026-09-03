@@ -278,6 +278,7 @@ def validate_workflow_run(
     workflow_run_id: int,
     pull_request_number: int,
     expected_head_sha: str,
+    pull_request: dict[str, Any],
 ) -> list[str]:
     reasons: list[str] = []
     run = client.get(f"repos/{validate_repository(repository)}/actions/runs/{workflow_run_id}")
@@ -287,8 +288,18 @@ def validate_workflow_run(
         reasons.append("gate was not triggered by the trusted PR Checks workflow")
     if run.get("event") != "pull_request" or run.get("conclusion") != "success":
         reasons.append("PR Checks workflow did not complete successfully")
+    if run.get("head_sha") != expected_head_sha:
+        reasons.append("workflow run head SHA does not match the pull request")
+    if run.get("head_branch") != pull_request.get("head", {}).get("ref"):
+        reasons.append("workflow run head branch does not match the pull request")
+    if run.get("head_repository", {}).get("full_name") != pull_request.get("head", {}).get(
+        "repo", {}
+    ).get("full_name"):
+        reasons.append("workflow run head repository does not match the pull request")
     associations = run.get("pull_requests")
-    if not isinstance(associations, list) or not any(
+    if not isinstance(associations, list):
+        reasons.append("workflow run pull request associations are invalid")
+    elif associations and not any(
         isinstance(item, dict)
         and item.get("number") == pull_request_number
         and item.get("head", {}).get("sha") == expected_head_sha
@@ -352,6 +363,7 @@ def preflight_merge_gate(
             workflow_run_id,
             pull_request_number,
             expected_head_sha,
+            pull_request,
         )
     )
     reasons.extend(

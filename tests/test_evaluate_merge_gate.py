@@ -86,6 +86,41 @@ class EvaluateMergeGateTests(unittest.TestCase):
         self.assertNotIn("@owner", body)
         self.assertIn("<!-- ai-review-gate -->", body)
 
+    def test_empty_workflow_pr_associations_are_allowed_when_head_matches(self) -> None:
+        class WorkflowClient:
+            def get(self, path, *, query=None):
+                return {
+                    "name": "PR Checks",
+                    "event": "pull_request",
+                    "conclusion": "success",
+                    "head_sha": "a" * 40,
+                    "head_branch": "bot/change",
+                    "head_repository": {"full_name": "bot/repo"},
+                    "pull_requests": [],
+                }
+
+            def paginate_collection(self, path, key):
+                return [
+                    {"name": name, "status": "completed", "conclusion": "success"}
+                    for name in evaluate_merge_gate.REQUIRED_JOBS
+                ]
+
+        reasons = evaluate_merge_gate.validate_workflow_run(
+            WorkflowClient(),
+            "owner/repo",
+            123,
+            9,
+            "a" * 40,
+            {
+                "head": {
+                    "sha": "a" * 40,
+                    "ref": "bot/change",
+                    "repo": {"full_name": "bot/repo"},
+                }
+            },
+        )
+        self.assertEqual(reasons, [])
+
 
 if __name__ == "__main__":
     unittest.main()

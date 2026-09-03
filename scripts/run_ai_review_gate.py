@@ -28,6 +28,54 @@ def require_environment(name: str) -> str:
     return value
 
 
+def resolve_pull_request_context(
+    client: GitHubClient,
+    repository: str,
+    workflow_run_id: int,
+    pull_request_hint: str,
+) -> tuple[int, str]:
+    run = client.get(f"repos/{repository}/actions/runs/{workflow_run_id}")
+    if not isinstance(run, dict):
+        raise GateError("workflow run response is not an object")
+    head_sha = str(run.get("head_sha", ""))
+    if pull_request_hint.strip():
+        return int(pull_request_hint), head_sha
+
+    head_repository = run.get("head_repository")
+    head_branch = run.get("head_branch")
+    if not isinstance(head_repository, dict) or not isinstance(head_branch, str):
+        raise GateError("workflow run does not identify its head repository and branch")
+    head_owner = head_repository.get("owner", {}).get("login")
+    head_repository_name = head_repository.get("full_name")
+    if not isinstance(head_owner, str) or not isinstance(head_repository_name, str):
+        raise GateError("workflow run head repository metadata is incomplete")
+    candidates = client.get(
+        f"repos/{repository}/pulls",
+        query={
+            "state": "open",
+            "base": "main",
+            "head": f"{head_owner}:{head_branch}",
+            "per_page": 100,
+        },
+    )
+    if not isinstance(candidates, list):
+        raise GateError("pull request lookup returned a non-array")
+    matches = [
+        pull_request
+        for pull_request in candidates
+        if isinstance(pull_request, dict)
+        and pull_request.get("head", {}).get("sha") == head_sha
+        and pull_request.get("head", {}).get("ref") == head_branch
+        and pull_request.get("head", {}).get("repo", {}).get("full_name")
+        == head_repository_name
+    ]
+    if len(matches) != 1 or not isinstance(matches[0].get("number"), int):
+        raise GateError(
+            "workflow run could not be mapped to exactly one open pull request"
+        )
+    return matches[0]["number"], head_sha
+
+
 def workflow_url() -> str:
     return (
         f"{require_environment('GITHUB_SERVER_URL')}/"
@@ -72,14 +120,18 @@ def _write_outputs(pull_request_number: int, head_sha: str) -> None:
 def main() -> int:
     token = require_environment("GITHUB_TOKEN")
     repository = require_environment("GITHUB_REPOSITORY")
-    pull_request_number = int(require_environment("PR_NUMBER"))
-    head_sha = require_environment("PR_HEAD_SHA")
     workflow_run_id = int(require_environment("PR_CHECKS_RUN_ID"))
     model = require_environment("AI_REVIEW_MODEL")
     base_url = require_environment("AI_REVIEW_BASE_URL")
     trusted_actors = parse_trusted_actors(require_environment("AUTO_MERGE_TRUSTED_ACTORS"))
     target_url = workflow_url()
     client = GitHubClient(token)
+    pull_request_number, head_sha = resolve_pull_request_context(
+        client,
+        repository,
+        workflow_run_id,
+        os.environ.get("PR_NUMBER", ""),
+    )
     review: dict[str, Any] | None = None
     reasons: list[str] = []
     status_started = False
