@@ -38,6 +38,7 @@ jobs:
           AI_REVIEW_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
           AI_REVIEW_BASE_URL: ${{ vars.AI_REVIEW_BASE_URL }}
           AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL }}
+          AI_REVIEW_TIMEOUT_SECONDS: ${{ vars.AI_REVIEW_TIMEOUT_SECONDS }}
           AUTO_MERGE_TRUSTED_ACTORS: ${{ vars.AUTO_MERGE_TRUSTED_ACTORS }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_CHECKS_RUN_ID: ${{ github.event.workflow_run.id }}

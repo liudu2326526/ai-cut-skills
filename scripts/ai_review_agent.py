@@ -22,6 +22,9 @@ from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-5.6-sol"
+DEFAULT_TIMEOUT_SECONDS = 300
+MIN_TIMEOUT_SECONDS = 30
+MAX_TIMEOUT_SECONDS = 900
 MAX_REVIEW_INPUT_CHARS = 160_000
 MAX_ERROR_CHARS = 500
 
@@ -113,6 +116,21 @@ def normalize_base_url(value: str) -> str:
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise AiReviewError("AI review base URL must not contain credentials, query, or fragment")
     return normalized
+
+
+def parse_timeout_seconds(value: str | None) -> int:
+    if value is None or not value.strip():
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        timeout_seconds = int(value)
+    except ValueError as exc:
+        raise AiReviewError("AI review timeout must be an integer number of seconds") from exc
+    if not MIN_TIMEOUT_SECONDS <= timeout_seconds <= MAX_TIMEOUT_SECONDS:
+        raise AiReviewError(
+            f"AI review timeout must be between {MIN_TIMEOUT_SECONDS} and "
+            f"{MAX_TIMEOUT_SECONDS} seconds"
+        )
+    return timeout_seconds
 
 
 def build_review_input(
@@ -214,7 +232,13 @@ def validate_review_shape(review: Any, expected_head_sha: str) -> dict[str, Any]
     return review
 
 
-def _request_json(url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _request_json(
+    url: str,
+    api_key: str,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
     request = Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -226,7 +250,7 @@ def _request_json(url: str, api_key: str, payload: dict[str, Any]) -> dict[str, 
         },
     )
     try:
-        with urlopen(request, timeout=120) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -252,11 +276,21 @@ def request_ai_review(
     api_key: str,
     base_url: str = DEFAULT_BASE_URL,
     model: str = DEFAULT_MODEL,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     if not api_key.strip():
         raise AiReviewError("AI review API key is missing")
     if not model.strip():
         raise AiReviewError("AI review model is missing")
+    if (
+        not isinstance(timeout_seconds, int)
+        or isinstance(timeout_seconds, bool)
+        or not MIN_TIMEOUT_SECONDS <= timeout_seconds <= MAX_TIMEOUT_SECONDS
+    ):
+        raise AiReviewError(
+            f"AI review timeout must be between {MIN_TIMEOUT_SECONDS} and "
+            f"{MAX_TIMEOUT_SECONDS} seconds"
+        )
     review_input = build_review_input(pull_request, changed_files, expected_head_sha)
     endpoint = f"{normalize_base_url(base_url)}/responses"
     response = _request_json(
@@ -279,6 +313,7 @@ def request_ai_review(
             },
             "max_output_tokens": 4_000,
         },
+        timeout_seconds=timeout_seconds,
     )
     if response.get("status") not in {None, "completed"}:
         raise AiReviewError(f"AI review response status is {response.get('status')!r}")
@@ -296,6 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--base-url", default=os.environ.get("AI_REVIEW_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--model", default=os.environ.get("AI_REVIEW_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=os.environ.get("AI_REVIEW_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+    )
     args = parser.parse_args(argv)
 
     context = json.loads(args.context.read_text(encoding="utf-8"))
@@ -306,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         api_key=os.environ.get("AI_REVIEW_API_KEY", ""),
         base_url=args.base_url,
         model=args.model,
+        timeout_seconds=args.timeout_seconds,
     )
     args.output.write_text(json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return 0

@@ -42,6 +42,16 @@ class AiReviewAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ai_review_agent.AiReviewError, "head SHA"):
             ai_review_agent.validate_review_shape(mismatched, head_sha)
 
+    def test_timeout_defaults_and_bounds(self) -> None:
+        self.assertEqual(
+            ai_review_agent.parse_timeout_seconds(None),
+            ai_review_agent.DEFAULT_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(ai_review_agent.parse_timeout_seconds("480"), 480)
+        for value in ("29", "901", "not-a-number"):
+            with self.subTest(value=value), self.assertRaises(ai_review_agent.AiReviewError):
+                ai_review_agent.parse_timeout_seconds(value)
+
     def test_contradictory_pass_is_rejected(self) -> None:
         head_sha = "a" * 40
         review = passing_review(head_sha)
@@ -70,12 +80,14 @@ class AiReviewAgentTests(unittest.TestCase):
                 api_key="not-a-real-key",
                 base_url="https://example.test/v1",
                 model="gpt-test",
+                timeout_seconds=480,
             )
         self.assertEqual(result["decision"], "pass")
         url, _api_key, payload = request.call_args.args
         self.assertEqual(url, "https://example.test/v1/responses")
         self.assertTrue(payload["text"]["format"]["strict"])
         self.assertFalse(payload["store"])
+        self.assertEqual(request.call_args.kwargs["timeout_seconds"], 480)
 
 
 if __name__ == "__main__":

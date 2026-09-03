@@ -8,7 +8,7 @@ import subprocess
 import sys
 from typing import Any
 
-from ai_review_agent import AiReviewError, request_ai_review
+from ai_review_agent import AiReviewError, parse_timeout_seconds, request_ai_review
 from evaluate_merge_gate import (
     GateError,
     GitHubClient,
@@ -123,6 +123,7 @@ def main() -> int:
     workflow_run_id = int(require_environment("PR_CHECKS_RUN_ID"))
     model = require_environment("AI_REVIEW_MODEL")
     base_url = require_environment("AI_REVIEW_BASE_URL")
+    timeout_seconds = parse_timeout_seconds(os.environ.get("AI_REVIEW_TIMEOUT_SECONDS"))
     trusted_actors = parse_trusted_actors(require_environment("AUTO_MERGE_TRUSTED_ACTORS"))
     target_url = workflow_url()
     client = GitHubClient(token)
@@ -167,6 +168,7 @@ def main() -> int:
             api_key=require_environment("AI_REVIEW_API_KEY"),
             base_url=base_url,
             model=model,
+            timeout_seconds=timeout_seconds,
         )
         reasons.extend(evaluate_ai_review(review, head_sha))
         if reasons:

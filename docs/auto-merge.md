@@ -17,6 +17,7 @@ Actions Variables：
 
 - `AI_REVIEW_BASE_URL`：OpenAI Responses API 兼容地址，必须使用 HTTPS。
 - `AI_REVIEW_MODEL`：审查模型 ID。
+- `AI_REVIEW_TIMEOUT_SECONDS`：单次 AI 审查读取超时，默认 `300` 秒，允许 `30`–`900` 秒。
 - `AUTO_MERGE_TRUSTED_ACTORS`：允许自动合并的 GitHub 登录名，逗号分隔；作者和 head 仓库所有者都必须命中。
 
 主分支必须要求 PR，并把下列状态设置为 required checks：
