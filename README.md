@@ -43,6 +43,10 @@
 - `aivideoeditor-usergrowth-automation`：UserGrowth 桌面自动上传，支持歌曲库匹配、Excel/CID 回填、素材标签、送审和诊断产物。
 - `aivideoeditor-soda-music-upload`：汽水音乐 UserGrowth 上传、录入变色龙、送审、CID 回收和任务证据记录；不包含番茄打标或红果短剧流程。
 
+### 7. 仓库维护
+
+- `ai-cut-skills-release`：校验 Skill 改动，按组别和日期创建分支，并提交 GitHub Pull Request。
+
 ## 能力链路
 
 ```text
@@ -116,6 +120,7 @@ python3 scripts/sync_skills.py --route "跑一个短剧从下载审核到包装�
     ├── edit-soda-music-video/
     ├── edit-short-drama-packaging/
     ├── aivideoeditor-video-fission/
+    ├── ai-cut-skills-release/
     ├── aivideoeditor-video-compression/
     ├── aivideoeditor-usergrowth-automation/
     └── aivideoeditor-soda-music-upload/

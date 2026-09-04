@@ -24,6 +24,10 @@
     "distribution": {
       "label": "分发自动化",
       "description": "将验收通过的视频上传、送审并回填运营数据。"
+    },
+    "repository": {
+      "label": "仓库维护",
+      "description": "校验 Skill 改动并组织 GitHub 分支、提交和 Pull Request。"
     }
   },
   "sync": {
@@ -807,6 +811,49 @@
       "optional": [
         "setup-video-editing-environment"
       ],
+      "next_stage": []
+    },
+    "ai-cut-skills-release": {
+      "category": "repository",
+      "summary": "校验 AI Cut Skills 改动，按组别和日期创建分支并提交 GitHub Pull Request。",
+      "capability_path": [
+        "Repository",
+        "Release",
+        "PullRequest"
+      ],
+      "tags": [
+        "Skill",
+        "Skills 仓库",
+        "提交",
+        "commit",
+        "分支",
+        "Pull Request",
+        "PR",
+        "GitHub"
+      ],
+      "when_to_use": [
+        "需要把一个或多个 Skill 改动提交到 AI Cut Skills 仓库",
+        "需要按组别和日期创建分支并创建或更新 GitHub PR",
+        "需要提交前自动执行 Skill 校验和仓库测试"
+      ],
+      "when_not_use": [
+        "只需要审查已有 PR 的代码质量",
+        "只需要合并已经通过审查的 PR"
+      ],
+      "inputs": [
+        "skill_names",
+        "group",
+        "change_type",
+        "summary"
+      ],
+      "outputs": [
+        "branch_name",
+        "commit_sha",
+        "pull_request_url",
+        "validation_report"
+      ],
+      "requires": [],
+      "optional": [],
       "next_stage": []
     }
   }
