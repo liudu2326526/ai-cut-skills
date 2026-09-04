@@ -8,7 +8,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import run_ai_review_gate  # noqa: E402
+import run_ai_review  # noqa: E402
 
 
 class ResolveClient:
@@ -40,10 +40,10 @@ class ResolveClient:
         raise AssertionError(path)
 
 
-class RunAiReviewGateTests(unittest.TestCase):
+class RunAiReviewTests(unittest.TestCase):
     def test_empty_workflow_association_resolves_unique_fork_pr(self) -> None:
         client = ResolveClient()
-        number, head_sha = run_ai_review_gate.resolve_pull_request_context(
+        number, head_sha = run_ai_review.resolve_pull_request_context(
             client,
             "owner/repo",
             123,
@@ -53,7 +53,7 @@ class RunAiReviewGateTests(unittest.TestCase):
         self.assertEqual(client.queries[0]["head"], "trusted-bot:bot/change")
 
     def test_workflow_payload_hint_is_preferred_when_present(self) -> None:
-        number, head_sha = run_ai_review_gate.resolve_pull_request_context(
+        number, head_sha = run_ai_review.resolve_pull_request_context(
             ResolveClient(),
             "owner/repo",
             123,

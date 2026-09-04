@@ -174,6 +174,6 @@ node "${WORKBUDDY_HOME:-$HOME/.workbuddy}/skills/subtitle-motion-effects/scripts
 
 各 Skill 的输入、输出和门禁规则请查看对应目录下的 `SKILL.md`。
 
-## Pull Request 门禁
+## Pull Request 检查与 AI 建议
 
-面向 `main` 的 PR 必须通过测试、语法检查、增量安全扫描和可信默认分支上的 AI 审查门禁。自动合并的信任边界、失败关闭策略及仓库变量见 [`docs/auto-merge.md`](docs/auto-merge.md)。
+面向 `main` 的 PR 必须通过测试、语法检查和增量安全扫描。AI 仅在 PR 中提供修改建议，不批准、不阻止、不执行合并；最终由维护者手动合并。仓库配置及审查边界见 [`docs/auto-merge.md`](docs/auto-merge.md)。

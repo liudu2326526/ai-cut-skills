@@ -1,33 +1,22 @@
 #!/usr/bin/env python3
-"""Deterministically validate whether an AI-reviewed PR may auto-merge."""
+"""Validate safe review input and publish advice, never merge decisions."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
-import time
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
-from ai_review_agent import AiReviewError, validate_review_shape
-
 
 GITHUB_API = "https://api.github.com"
 GITHUB_API_VERSION = "2026-03-10"
 REQUIRED_JOBS = {"test", "lint", "security-scan"}
-ALLOWED_ROOT_FILES = {"README.md", "LICENSE", "skill-catalog.yaml"}
-ALLOWED_PREFIXES = ("skills/", "tests/")
 BLOCKED_BASENAMES = {
     ".env",
-    ".gitmodules",
-    "CODEOWNERS",
-    "Dockerfile",
-    "requirements-ci.txt",
 }
 BLOCKED_SUFFIXES = (".key", ".pem", ".p12", ".pfx", ".keystore")
 MAX_CHANGED_FILES = 80
@@ -37,12 +26,12 @@ SAFE_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SAFE_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-class GateError(RuntimeError):
+class ReviewError(RuntimeError):
     """Raised when GitHub state cannot be validated."""
 
 
 @dataclass
-class GateAssessment:
+class ReviewAssessment:
     passed: bool
     reasons: list[str] = field(default_factory=list)
     pull_request: dict[str, Any] | None = None
@@ -52,7 +41,7 @@ class GateAssessment:
 class GitHubClient:
     def __init__(self, token: str, *, api_base: str = GITHUB_API) -> None:
         if not token:
-            raise GateError("GITHUB_TOKEN is missing")
+            raise ReviewError("GITHUB_TOKEN is missing")
         self.token = token
         self.api_base = api_base.rstrip("/")
 
@@ -64,6 +53,14 @@ class GitHubClient:
         payload: dict[str, Any] | None = None,
         query: dict[str, Any] | None = None,
     ) -> Any:
+        # This client can only write issue comments, even if a caller regresses.
+        if method != "GET" and not (
+            method == "POST"
+            and re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+/comments", path)
+            or method == "PATCH"
+            and re.fullmatch(r"repos/[^/]+/[^/]+/issues/comments/[0-9]+", path)
+        ):
+            raise ReviewError("AI review can only write pull request comments")
         url = path if path.startswith("https://") else f"{self.api_base}/{path.lstrip('/')}"
         if query:
             url = f"{url}?{urlencode(query)}"
@@ -90,15 +87,15 @@ class GitHubClient:
                 message = json.loads(error_body).get("message", "request failed")
             except (json.JSONDecodeError, AttributeError):
                 message = "request failed"
-            raise GateError(f"GitHub API returned HTTP {exc.code}: {message}") from exc
+            raise ReviewError(f"GitHub API returned HTTP {exc.code}: {message}") from exc
         except (URLError, TimeoutError) as exc:
-            raise GateError(f"GitHub API request failed: {exc}") from exc
+            raise ReviewError(f"GitHub API request failed: {exc}") from exc
         if not body:
             return None
         try:
             return json.loads(body.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise GateError("GitHub API returned invalid JSON") from exc
+            raise ReviewError("GitHub API returned invalid JSON") from exc
 
     def get(self, path: str, *, query: dict[str, Any] | None = None) -> Any:
         return self.request("GET", path, query=query)
@@ -114,44 +111,44 @@ class GitHubClient:
         for page in range(1, 11):
             batch = self.get(path, query={"per_page": 100, "page": page})
             if not isinstance(batch, list):
-                raise GateError("GitHub paginated endpoint returned a non-array")
+                raise ReviewError("GitHub paginated endpoint returned a non-array")
             items.extend(item for item in batch if isinstance(item, dict))
             if len(batch) < 100:
                 return items
-        raise GateError("GitHub pagination exceeded the safety limit")
+        raise ReviewError("GitHub pagination exceeded the safety limit")
 
     def paginate_collection(self, path: str, key: str) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for page in range(1, 11):
             response = self.get(path, query={"per_page": 100, "page": page})
             if not isinstance(response, dict) or not isinstance(response.get(key), list):
-                raise GateError(f"GitHub paginated endpoint did not return {key!r}")
+                raise ReviewError(f"GitHub paginated endpoint did not return {key!r}")
             batch = response[key]
             items.extend(item for item in batch if isinstance(item, dict))
             if len(batch) < 100:
                 return items
-        raise GateError("GitHub pagination exceeded the safety limit")
+        raise ReviewError("GitHub pagination exceeded the safety limit")
 
 
 def validate_repository(repository: str) -> str:
     if not SAFE_REPOSITORY.fullmatch(repository):
-        raise GateError("repository must be in owner/name form")
+        raise ReviewError("repository must be in owner/name form")
     return repository
 
 
 def validate_sha(value: str, label: str = "SHA") -> str:
     normalized = value.strip().lower()
     if not SAFE_SHA.fullmatch(normalized):
-        raise GateError(f"{label} must be a full lowercase SHA-1")
+        raise ReviewError(f"{label} must be a full lowercase SHA-1")
     return normalized
 
 
 def parse_trusted_actors(value: str) -> set[str]:
     actors = {actor.strip().casefold() for actor in value.split(",") if actor.strip()}
     if not actors:
-        raise GateError("AUTO_MERGE_TRUSTED_ACTORS is empty")
+        raise ReviewError("AI_REVIEW_TRUSTED_ACTORS is empty")
     if any(not re.fullmatch(r"[A-Za-z0-9-]+", actor) for actor in actors):
-        raise GateError("trusted actor list contains an invalid GitHub login")
+        raise ReviewError("trusted actor list contains an invalid GitHub login")
     return actors
 
 
@@ -159,21 +156,12 @@ def get_pull_request(
     client: GitHubClient,
     repository: str,
     pull_request_number: int,
-    *,
-    retries: int = 4,
 ) -> dict[str, Any]:
     repository = validate_repository(repository)
-    pull_request: dict[str, Any] = {}
-    for attempt in range(retries):
-        result = client.get(f"repos/{repository}/pulls/{pull_request_number}")
-        if not isinstance(result, dict):
-            raise GateError("pull request response is not an object")
-        pull_request = result
-        if result.get("mergeable") is not None and result.get("mergeable_state") != "unknown":
-            break
-        if attempt + 1 < retries:
-            time.sleep(1)
-    return pull_request
+    result = client.get(f"repos/{repository}/pulls/{pull_request_number}")
+    if not isinstance(result, dict):
+        raise ReviewError("pull request response is not an object")
+    return result
 
 
 def get_changed_files(
@@ -198,9 +186,11 @@ def _path_failure(path_text: Any) -> str | None:
     path = PurePosixPath(path_text)
     if any(part in {"", ".", ".."} for part in path.parts):
         return f"unsafe path: {path_text!r}"
-    if path_text not in ALLOWED_ROOT_FILES and not path_text.startswith(ALLOWED_PREFIXES):
-        return f"path requires human review: {path_text}"
-    if path.name in BLOCKED_BASENAMES or path.name.lower().endswith(BLOCKED_SUFFIXES):
+    if (
+        path.name in BLOCKED_BASENAMES
+        or path.name.startswith(".env.")
+        or path.name.lower().endswith(BLOCKED_SUFFIXES)
+    ):
         return f"sensitive file requires human review: {path_text}"
     return None
 
@@ -285,7 +275,7 @@ def validate_workflow_run(
     if not isinstance(run, dict):
         return ["workflow run response is not an object"]
     if run.get("name") != "PR Checks":
-        reasons.append("gate was not triggered by the trusted PR Checks workflow")
+        reasons.append("review was not triggered by the trusted PR Checks workflow")
     if run.get("event") != "pull_request" or run.get("conclusion") != "success":
         reasons.append("PR Checks workflow did not complete successfully")
     if run.get("head_sha") != expected_head_sha:
@@ -322,7 +312,7 @@ def validate_workflow_run(
     return reasons
 
 
-def preflight_merge_gate(
+def preflight_review(
     client: GitHubClient,
     *,
     repository: str,
@@ -330,7 +320,7 @@ def preflight_merge_gate(
     expected_head_sha: str,
     workflow_run_id: int,
     trusted_actors: set[str],
-) -> GateAssessment:
+) -> ReviewAssessment:
     expected_head_sha = validate_sha(expected_head_sha, "expected head SHA")
     pull_request = get_pull_request(client, repository, pull_request_number)
     changed_files = get_changed_files(client, repository, pull_request_number)
@@ -339,16 +329,11 @@ def preflight_merge_gate(
     if pull_request.get("state") != "open":
         reasons.append("pull request is not open")
     if pull_request.get("draft") is True:
-        reasons.append("draft pull requests cannot auto-merge")
+        reasons.append("automatic review is skipped for draft pull requests")
     if pull_request.get("base", {}).get("ref") != "main":
         reasons.append("pull request does not target main")
     if pull_request.get("head", {}).get("sha") != expected_head_sha:
         reasons.append("pull request head changed after checks started")
-    if pull_request.get("mergeable") is not True:
-        reasons.append("pull request is not currently mergeable")
-    if pull_request.get("mergeable_state") not in {"clean", "blocked"}:
-        reasons.append(f"unsafe mergeable state: {pull_request.get('mergeable_state')!r}")
-
     author = pull_request.get("user", {}).get("login")
     head_owner = pull_request.get("head", {}).get("repo", {}).get("owner", {}).get("login")
     if not isinstance(author, str) or author.casefold() not in trusted_actors:
@@ -369,49 +354,11 @@ def preflight_merge_gate(
     reasons.extend(
         validate_changed_files(client, repository, expected_head_sha, changed_files)
     )
-    return GateAssessment(
+    return ReviewAssessment(
         passed=not reasons,
         reasons=list(dict.fromkeys(reasons)),
         pull_request=pull_request,
         changed_files=changed_files,
-    )
-
-
-def evaluate_ai_review(review: dict[str, Any], expected_head_sha: str) -> list[str]:
-    try:
-        validated = validate_review_shape(review, expected_head_sha)
-    except AiReviewError as exc:
-        return [str(exc)]
-    reasons: list[str] = []
-    if validated["decision"] != "pass":
-        reasons.extend(validated["blocking_reasons"] or ["AI review blocked the pull request"])
-    for finding in validated["findings"]:
-        if finding["severity"] in {"P0", "P1"}:
-            reasons.append(
-                f"{finding['severity']} {finding['path']}: {finding['title']}"
-            )
-    return list(dict.fromkeys(reasons))
-
-
-def publish_commit_status(
-    client: GitHubClient,
-    *,
-    repository: str,
-    sha: str,
-    state: str,
-    description: str,
-    target_url: str,
-) -> None:
-    if state not in {"error", "failure", "pending", "success"}:
-        raise GateError(f"invalid commit status state: {state}")
-    client.post(
-        f"repos/{validate_repository(repository)}/statuses/{validate_sha(sha)}",
-        {
-            "state": state,
-            "context": "ai-review/gate",
-            "description": description[:140],
-            "target_url": target_url,
-        },
     )
 
 
@@ -424,10 +371,20 @@ def render_review_comment(
     reasons: Iterable[str],
     *,
     model: str,
-    passed: bool,
+    head_sha: str,
 ) -> str:
+    # Reuse the old marker so a new advisory replaces an old PASS/BLOCK comment.
     marker = "<!-- ai-review-gate -->"
-    lines = [marker, f"## AI Review Gate: {'PASS' if passed else 'BLOCK'}", ""]
+    lines = [
+        marker,
+        "## AI 审查建议" if review is not None else "## AI 审查未完成",
+        "",
+        "仅供人工参考：AI 不批准、不阻止、不执行合并，所有问题由维护者判断。",
+        "测试、lint 和安全扫描仍是独立的必需检查。",
+        "",
+        f"Reviewed head: `{validate_sha(head_sha)}`",
+        "",
+    ]
     if review:
         lines.extend([_escape_mentions(str(review.get("summary", "")))[:2_000], ""])
         findings = review.get("findings", [])
@@ -444,12 +401,13 @@ def render_review_comment(
                     f"- **{finding.get('severity', 'P?')}** `{location}` — {title}: {detail}"
                 )
             lines.append("")
-    unique_reasons = list(dict.fromkeys(str(reason) for reason in reasons if str(reason).strip()))
+    limitations = list(reasons) + (review.get("limitations", []) if review else [])
+    unique_reasons = list(dict.fromkeys(str(reason) for reason in limitations if str(reason).strip()))
     if unique_reasons:
-        lines.extend(["### Gate reasons", ""])
+        lines.extend(["### 审查限制 / 未完成原因（不阻止合并）", ""])
         lines.extend(f"- {_escape_mentions(reason)}" for reason in unique_reasons[:30])
         lines.append("")
-    lines.append(f"Model: `{_escape_mentions(model)}`. Deterministic CI and policy checks remain authoritative.")
+    lines.append(f"Model: `{_escape_mentions(model)}`. 最终由人手动合并。")
     return "\n".join(lines)[:60_000]
 
 
@@ -472,23 +430,3 @@ def upsert_review_comment(
             client.patch(f"repos/{repository}/issues/comments/{comment['id']}", {"body": body})
             return
     client.post(f"repos/{repository}/issues/{pull_request_number}/comments", {"body": body})
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("review_json")
-    parser.add_argument("--expected-head", required=True)
-    args = parser.parse_args(argv)
-    with open(args.review_json, encoding="utf-8") as handle:
-        review = json.load(handle)
-    reasons = evaluate_ai_review(review, args.expected_head)
-    if reasons:
-        for reason in reasons:
-            print(reason)
-        return 1
-    print("AI review gate passed")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

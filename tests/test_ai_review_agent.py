@@ -12,13 +12,12 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import ai_review_agent  # noqa: E402
 
 
-def passing_review(head_sha: str) -> dict:
+def advisory_review(head_sha: str) -> dict:
     return {
-        "decision": "pass",
         "reviewed_head_sha": head_sha,
-        "summary": "No blocking issue found.",
+        "summary": "No concrete issue found in the supplied change.",
         "findings": [],
-        "blocking_reasons": [],
+        "limitations": [],
     }
 
 
@@ -32,13 +31,13 @@ class AiReviewAgentTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ai_review_agent.AiReviewError):
                 ai_review_agent.normalize_base_url(value)
 
-    def test_pass_review_must_match_head_and_have_no_blockers(self) -> None:
+    def test_advisory_review_must_match_head(self) -> None:
         head_sha = "a" * 40
         self.assertEqual(
-            ai_review_agent.validate_review_shape(passing_review(head_sha), head_sha)["decision"],
-            "pass",
+            ai_review_agent.validate_review_shape(advisory_review(head_sha), head_sha)["reviewed_head_sha"],
+            head_sha,
         )
-        mismatched = passing_review("b" * 40)
+        mismatched = advisory_review("b" * 40)
         with self.assertRaisesRegex(ai_review_agent.AiReviewError, "head SHA"):
             ai_review_agent.validate_review_shape(mismatched, head_sha)
 
@@ -52,12 +51,32 @@ class AiReviewAgentTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ai_review_agent.AiReviewError):
                 ai_review_agent.parse_timeout_seconds(value)
 
-    def test_contradictory_pass_is_rejected(self) -> None:
+    def test_legacy_merge_decisions_are_rejected(self) -> None:
         head_sha = "a" * 40
-        review = passing_review(head_sha)
-        review["blocking_reasons"] = ["Unsafe change"]
-        with self.assertRaisesRegex(ai_review_agent.AiReviewError, "contradicts"):
+        review = advisory_review(head_sha)
+        review["decision"] = "block"
+        with self.assertRaisesRegex(ai_review_agent.AiReviewError, "schema"):
             ai_review_agent.validate_review_shape(review, head_sha)
+
+    def test_high_severity_findings_and_limitations_are_valid_advice(self) -> None:
+        head_sha = "a" * 40
+        for severity in ("P0", "P1", "P2", "P3"):
+            with self.subTest(severity=severity):
+                review = advisory_review(head_sha)
+                review["findings"] = [{
+                    "severity": severity, "path": "skills/demo/run.py", "line": 5,
+                    "title": "Unsafe deletion", "detail": "Restrict the deletion target.",
+                }]
+                review["limitations"] = ["Only the supplied patch was reviewed."]
+                self.assertEqual(ai_review_agent.validate_review_shape(review, head_sha), review)
+
+    def test_limitations_must_be_nonempty_strings(self) -> None:
+        for limitations in ("unknown", [None], [""]):
+            with self.subTest(limitations=limitations):
+                review = advisory_review("a" * 40)
+                review["limitations"] = limitations
+                with self.assertRaises(ai_review_agent.AiReviewError):
+                    ai_review_agent.validate_review_shape(review, "a" * 40)
 
     def test_responses_request_uses_strict_schema(self) -> None:
         head_sha = "a" * 40
@@ -67,7 +86,7 @@ class AiReviewAgentTests(unittest.TestCase):
                 {
                     "type": "message",
                     "content": [
-                        {"type": "output_text", "text": __import__("json").dumps(passing_review(head_sha))}
+                        {"type": "output_text", "text": __import__("json").dumps(advisory_review(head_sha))}
                     ],
                 }
             ],
@@ -82,11 +101,13 @@ class AiReviewAgentTests(unittest.TestCase):
                 model="gpt-test",
                 timeout_seconds=480,
             )
-        self.assertEqual(result["decision"], "pass")
+        self.assertEqual(result["reviewed_head_sha"], head_sha)
         url, _api_key, payload = request.call_args.args
         self.assertEqual(url, "https://example.test/v1/responses")
         self.assertTrue(payload["text"]["format"]["strict"])
         self.assertFalse(payload["store"])
+        self.assertNotIn("decision", payload["text"]["format"]["schema"]["properties"])
+        self.assertNotIn("blocking_reasons", payload["text"]["format"]["schema"]["properties"])
         self.assertEqual(request.call_args.kwargs["timeout_seconds"], 480)
 
 
